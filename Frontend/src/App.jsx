@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { css } from '../styled-system/css'
 import '../styled-system/styles.css'
 import { Button } from '@/components/ui'
 import FlowTest from './flowTest'
 
 function App() {
+  const [selectedNode, setSelectedNode] = useState(null)
+
   return (
     <main
       className={css({
@@ -29,9 +32,15 @@ function App() {
         })}
       >
         <div>
-          <p className={css({ fontSize: 'sm', color: 'gray.500' })}>TRACE</p>
-          <h1 className={css({ fontSize: 'xl', fontWeight: 'bold' })}>Explorer</h1>
+          <p className={css({ fontSize: 'sm', color: 'gray.500' })}>
+            TRACE
+          </p>
+
+          <h1 className={css({ fontSize: 'xl', fontWeight: 'bold' })}>
+            Explorer
+          </h1>
         </div>
+
         <input
           className={css({
             w: 'full',
@@ -45,20 +54,49 @@ function App() {
           placeholder="Search queries"
           aria-label="Search queries"
         />
+
         <div className={css({ display: 'flex', gap: '2' })}>
-          <Button size="sm" variant="outline">All</Button>
-          <Button size="sm" variant="outline">Success</Button>
-          <Button size="sm" variant="outline">Failed</Button>
+          <Button size="sm" variant="outline">
+            All
+          </Button>
+
+          <Button size="sm" variant="outline">
+            Success
+          </Button>
+
+          <Button size="sm" variant="outline">
+            Failed
+          </Button>
         </div>
-        <Button variant="outline">+ New query</Button>
-        <div className={css({ display: 'grid', gap: '2', fontSize: 'sm' })}>
+
+        <Button variant="outline">
+          + New query
+        </Button>
+
+        <div
+          className={css({
+            display: 'grid',
+            gap: '2',
+            fontSize: 'sm',
+          })}
+        >
           <strong>□ university.sqlite</strong>
-          <span className={css({ pl: '4', color: 'green.700' })}>● GPA above 8...</span>
-          <span className={css({ pl: '4', color: 'red.700' })}>● Faculty per department</span>
+
+          <span className={css({ pl: '4', color: 'green.700' })}>
+            ● GPA above 8...
+          </span>
+
+          <span className={css({ pl: '4', color: 'red.700' })}>
+            ● Faculty per department
+          </span>
+
           <strong>□ library.sqlite</strong>
           <strong>□ hospital.sqlite</strong>
         </div>
-        <Button variant="outline" mt="auto">+ Add database</Button>
+
+        <Button variant="outline" mt="auto">
+          + Add database
+        </Button>
       </aside>
 
       <section
@@ -69,41 +107,283 @@ function App() {
           bg: 'white',
         })}
       >
-        <header className={css({ display: 'grid', gap: '3', p: '4', borderBottomWidth: '1px', borderColor: 'gray.200' })}>
-          <div className={css({ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '3' })}>
+        <header
+          className={css({
+            display: 'grid',
+            gap: '3',
+            p: '4',
+            borderBottomWidth: '1px',
+            borderColor: 'gray.200',
+          })}
+        >
+          <div
+            className={css({
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: '3',
+            })}
+          >
             <div>
-              <p className={css({ fontSize: 'sm', color: 'gray.500' })}>university.sqlite</p>
-              <h2 className={css({ fontSize: 'lg', fontWeight: 'semibold' })}>GPA above 8 and more than 3 courses</h2>
+              <p className={css({ fontSize: 'sm', color: 'gray.500' })}>
+                university.sqlite
+              </p>
+
+              <h2
+                className={css({
+                  fontSize: 'lg',
+                  fontWeight: 'semibold',
+                })}
+              >
+                GPA above 8 and more than 3 courses
+              </h2>
             </div>
-            <span className={css({ color: 'green.700', fontSize: 'sm', fontWeight: 'medium' })}>Success</span>
+
+            <span
+              className={css({
+                color: 'green.700',
+                fontSize: 'sm',
+                fontWeight: 'medium',
+              })}
+            >
+              Success
+            </span>
           </div>
+
           <div className={css({ display: 'flex', gap: '3' })}>
             <input
-              className={css({ flex: '1', minW: '0', h: '10', px: '3', borderWidth: '1px', borderColor: 'gray.300', borderRadius: 'md' })}
+              className={css({
+                flex: '1',
+                minW: '0',
+                h: '10',
+                px: '3',
+                borderWidth: '1px',
+                borderColor: 'gray.300',
+                borderRadius: 'md',
+              })}
               defaultValue="Students with GPA above 8 enrolled in more than 3 courses"
               aria-label="Query request"
             />
-            <Button>Run</Button>
+
+            <Button>
+              Run
+            </Button>
           </div>
         </header>
-        <div className={css({ minH: '0', overflow: 'hidden', position: 'relative' })}>
-          <FlowTest />
+
+        <div
+          className={css({
+            minH: '0',
+            overflow: 'hidden',
+            position: 'relative',
+          })}
+        >
+          <FlowTest
+            onSelectNode={setSelectedNode}
+            selectedNodeId={selectedNode?.id}
+          />
         </div>
       </section>
 
-      <aside className={css({ p: '4', bg: 'white', borderLeftWidth: { lg: '1px' }, borderColor: 'gray.200' })}>
-        <p className={css({ fontSize: 'sm', color: 'gray.500' })}>Node details</p>
-        <h2 className={css({ mt: '1', fontSize: 'lg', fontWeight: 'semibold' })}>Select a node</h2>
-        <p className={css({ mt: '2', fontSize: 'sm', color: 'gray.600' })}>Details for the selected query action will appear here.</p>
+      <aside
+        className={css({
+          p: '4',
+          bg: 'white',
+          borderLeftWidth: { lg: '1px' },
+          borderColor: 'gray.200',
+          overflowY: 'auto',
+        })}
+      >
+        <p className={css({ fontSize: 'sm', color: 'gray.500' })}>
+          Node details
+        </p>
+
+        {selectedNode ? (
+          <div className={css({ mt: '2', display: 'grid', gap: '3' })}>
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Action
+              </p>
+
+              <h2
+                className={css({
+                  fontSize: 'lg',
+                  fontWeight: 'semibold',
+                })}
+              >
+                {selectedNode.action}
+              </h2>
+            </div>
+
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Parameters
+              </p>
+
+              <p className={css({ fontSize: 'sm' })}>
+                {selectedNode.params}
+              </p>
+            </div>
+
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Status
+              </p>
+
+              <p
+                className={css({
+                  fontSize: 'sm',
+                  color:
+                    selectedNode.status === 'FAILED'
+                      ? 'red.700'
+                      : 'green.700',
+                })}
+              >
+                {selectedNode.status}
+              </p>
+            </div>
+
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Confidence
+              </p>
+
+              <p className={css({ fontSize: 'sm' })}>
+                {Math.round(selectedNode.confidence * 100)}%
+              </p>
+            </div>
+
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Branch
+              </p>
+
+              <p className={css({ fontSize: 'sm' })}>
+                {selectedNode.branch_id}
+              </p>
+            </div>
+
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Checkpoint
+              </p>
+
+              <p className={css({ fontSize: 'sm' })}>
+                {selectedNode.checkpoint_id || 'None'}
+              </p>
+            </div>
+
+            <div>
+              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                Time
+              </p>
+
+              <p className={css({ fontSize: 'sm' })}>
+                {selectedNode.created_at}
+              </p>
+            </div>
+
+            {selectedNode.failure_reason && (
+              <div>
+                <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                  Failure reason
+                </p>
+
+                <p
+                  className={css({
+                    fontSize: 'sm',
+                    color: 'red.700',
+                    fontWeight: 'medium',
+                  })}
+                >
+                  {selectedNode.failure_reason}
+                </p>
+              </div>
+            )}
+
+            {selectedNode.clarification && (
+              <div>
+                <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                  Clarification
+                </p>
+
+                <p className={css({ fontSize: 'sm' })}>
+                  {selectedNode.clarification}
+                </p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <h2
+              className={css({
+                mt: '1',
+                fontSize: 'lg',
+                fontWeight: 'semibold',
+              })}
+            >
+              Select a node
+            </h2>
+
+            <p
+              className={css({
+                mt: '2',
+                fontSize: 'sm',
+                color: 'gray.600',
+              })}
+            >
+              Details for the selected query action will appear here.
+            </p>
+          </>
+        )}
       </aside>
 
-      <section className={css({ gridColumn: { lg: '2 / 4' }, p: '4', bg: 'white', borderTopWidth: '1px', borderColor: 'gray.200' })}>
-        <div className={css({ display: 'flex', gap: '5', borderBottomWidth: '1px', borderColor: 'gray.200' })}>
-          <strong className={css({ pb: '2', borderBottomWidth: '2px', borderColor: 'blue.600' })}>Final SQL</strong>
-          <span className={css({ color: 'gray.500' })}>Results</span>
-          <span className={css({ color: 'gray.500' })}>Summary</span>
+      <section
+        className={css({
+          gridColumn: { lg: '2 / 4' },
+          p: '4',
+          bg: 'white',
+          borderTopWidth: '1px',
+          borderColor: 'gray.200',
+        })}
+      >
+        <div
+          className={css({
+            display: 'flex',
+            gap: '5',
+            borderBottomWidth: '1px',
+            borderColor: 'gray.200',
+          })}
+        >
+          <strong
+            className={css({
+              pb: '2',
+              borderBottomWidth: '2px',
+              borderColor: 'blue.600',
+            })}
+          >
+            Final SQL
+          </strong>
+
+          <span className={css({ color: 'gray.500' })}>
+            Results
+          </span>
+
+          <span className={css({ color: 'gray.500' })}>
+            Summary
+          </span>
         </div>
-        <pre className={css({ mt: '3', whiteSpace: 'pre-wrap', fontSize: 'sm', color: 'gray.700' })}>SELECT s.name FROM Student s JOIN Enrollment e ON s.id = e.student_id;</pre>
+
+        <pre
+          className={css({
+            mt: '3',
+            whiteSpace: 'pre-wrap',
+            fontSize: 'sm',
+            color: 'gray.700',
+          })}
+        >
+          SELECT s.name FROM Student s JOIN Enrollment e ON s.id = e.student_id;
+        </pre>
       </section>
     </main>
   )
