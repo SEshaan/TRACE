@@ -349,7 +349,11 @@ The score must be between 0 and 2.
             max_tokens=self.max_tokens,
         )
 
-        return response.choices[0].message.content or ""
+        msg = response.choices[0].message
+        content = msg.content or ""
+        if not content and hasattr(msg, "reasoning_content") and msg.reasoning_content:
+            content = msg.reasoning_content
+        return content
 
     # ------------------------------------------------------------------
     # JSON
