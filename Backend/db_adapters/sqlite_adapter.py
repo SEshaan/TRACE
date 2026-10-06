@@ -1,92 +1,222 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass, field
-from typing import Any
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Iterator, Sequence
+
+from .schema import (
+    DatabaseSchema,
+    SchemaExtractor,
+    TableSchema,
+)
 
 
-@dataclass
-class ColumnSchema:
-    name: str
-    data_type: str
-    nullable: bool
-    default: Any
-    primary_key: bool
-    primary_key_position: int
-    generated: bool = False
-
-
-@dataclass
-class ForeignKeySchema:
-    column: str
-    referenced_table: str
-    referenced_column: str
-    on_update: str
-    on_delete: str
-
-
-@dataclass
-class IndexSchema:
-    name: str
-    unique: bool
+@dataclass(frozen=True)
+class QueryResult:
     columns: list[str]
+    rows: list[dict[str, Any]]
+    row_count: int
 
 
-@dataclass
-class TableSchema:
-    name: str
-    columns: list[ColumnSchema] = field(default_factory=list)
-    foreign_keys: list[ForeignKeySchema] = field(default_factory=list)
-    indexes: list[IndexSchema] = field(default_factory=list)
+@dataclass(frozen=True)
+class SqlPreview:
+    sql: str
+    parameters: tuple[Any, ...]
+    result: QueryResult
 
 
-@dataclass
-class DatabaseSchema:
-    tables: list[TableSchema] = field(default_factory=list)
+class SQLiteAdapter:
+    """
+    Read-only SQLite adapter.
 
-    def table(self, name: str) -> TableSchema | None:
-        return next(
-            (table for table in self.tables if table.name == name),
-            None,
+    The query execution platform currently supports only read operations.
+
+    Responsibilities:
+      - open SQLite connections
+      - inspect schema
+      - execute read-only SQL
+      - execute bounded previews
+      - expose normalized results
+
+    This adapter does NOT:
+      - generate SQL
+      - validate query actions
+      - interpret natural language
+      - mutate the database
+      - manage application/query-state persistence
+    """
+
+    def __init__(
+        self,
+        database_path: str,
+        *,
+        timeout: float = 5.0,
+    ):
+        self.database_path = database_path
+        self.timeout = timeout
+
+    def connect(self) -> sqlite3.Connection:
+        """
+        Open a read-only SQLite connection.
+
+        SQLite's mode=ro prevents writes at the connection level.
+        """
+        if self.database_path == ":memory:":
+            connection = sqlite3.connect(
+                self.database_path,
+                timeout=self.timeout,
+            )
+        else:
+            connection = sqlite3.connect(
+                f"file:{self.database_path}?mode=ro",
+                uri=True,
+                timeout=self.timeout,
+            )
+
+        connection.row_factory = sqlite3.Row
+
+        # Enforce FK semantics when joins/schema relationships are inspected.
+        connection.execute("PRAGMA foreign_keys = ON")
+
+        return connection
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """
+        Provide a read-only connection.
+
+        No commit/rollback is performed because the adapter does not
+        support mutations.
+        """
+        connection = self.connect()
+
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    def query(
+        self,
+        sql: str,
+        parameters: Sequence[Any] = (),
+    ) -> QueryResult:
+        """
+        Execute a read-only SQL query.
+
+        Intended for:
+          - compiled query execution
+          - final result retrieval
+          - intermediate state execution
+
+        No LIMIT is automatically added.
+
+        Use preview() when an execution must be bounded.
+        """
+        self._validate_read_only_sql(sql)
+
+        with self.connection() as connection:
+            cursor = connection.execute(
+                sql,
+                tuple(parameters),
+            )
+
+            rows = cursor.fetchall()
+
+            columns = [
+                description[0]
+                for description in cursor.description or []
+            ]
+
+        normalized_rows = [
+            {
+                column: row[column]
+                for column in columns
+            }
+            for row in rows
+        ]
+
+        return QueryResult(
+            columns=columns,
+            rows=normalized_rows,
+            row_count=len(normalized_rows),
         )
 
-
-class SchemaExtractor:
-    """
-    Extracts a SQLite database schema into a deterministic Python model.
-
-    The extracted schema is intended to be consumed by:
-      - the query decision model
-      - action validation
-      - SQL compilation
-      - frontend schema exploration
-    """
-
-    def __init__(self, connection: sqlite3.Connection):
-        self.connection = connection
-
-    def extract(self) -> DatabaseSchema:
-        tables = []
-
-        for table_name in self._get_tables():
-            tables.append(self._extract_table(table_name))
-
-        return DatabaseSchema(tables=tables)
-
-    def extract_table(self, table_name: str) -> TableSchema:
+    def preview(
+        self,
+        sql: str,
+        parameters: Sequence[Any] = (),
+        *,
+        limit: int = 50,
+    ) -> SqlPreview:
         """
-        Extract a single table.
+        Execute a bounded read-only preview.
 
-        Raises:
-            ValueError: if the table does not exist.
+        The preview always gets an explicit outer LIMIT.
         """
-        if table_name not in self._get_tables():
-            raise ValueError(f"Table does not exist: {table_name}")
+        self._validate_limit(limit)
+        self._validate_read_only_sql(sql)
 
-        return self._extract_table(table_name)
+        preview_sql = self._with_limit(
+            sql,
+            limit,
+        )
 
-    def _get_tables(self) -> list[str]:
-        rows = self.connection.execute(
+        result = self.query(
+            preview_sql,
+            parameters,
+        )
+
+        return SqlPreview(
+            sql=preview_sql,
+            parameters=tuple(parameters),
+            result=result,
+        )
+
+    def schema(self) -> DatabaseSchema:
+        """
+        Extract the complete database schema.
+        """
+        with self.connection() as connection:
+            return SchemaExtractor(connection).extract()
+
+    def schema_table(
+        self,
+        table_name: str,
+    ) -> TableSchema:
+        """
+        Extract one table's schema.
+        """
+        with self.connection() as connection:
+            return SchemaExtractor(connection).extract_table(
+                table_name,
+            )
+
+    def table_exists(
+        self,
+        table_name: str,
+    ) -> bool:
+        """
+        Check whether a user table exists.
+        """
+        result = self.query(
+            """
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name = ?
+            LIMIT 1
+            """,
+            [table_name],
+        )
+
+        return result.row_count == 1
+
+    def table_names(self) -> list[str]:
+        """
+        Return user-created tables.
+        """
+        result = self.query(
             """
             SELECT name
             FROM sqlite_master
@@ -94,135 +224,66 @@ class SchemaExtractor:
               AND name NOT LIKE 'sqlite_%'
             ORDER BY name
             """
-        ).fetchall()
-
-        return [row[0] for row in rows]
-
-    def _extract_table(self, table_name: str) -> TableSchema:
-        columns = self._extract_columns(table_name)
-        foreign_keys = self._extract_foreign_keys(table_name)
-        indexes = self._extract_indexes(table_name)
-
-        return TableSchema(
-            name=table_name,
-            columns=columns,
-            foreign_keys=foreign_keys,
-            indexes=indexes,
         )
 
-    def _extract_columns(self, table_name: str) -> list[ColumnSchema]:
-        rows = self.connection.execute(
-            f"PRAGMA table_info({self._quote_identifier(table_name)})"
-        ).fetchall()
-
         return [
-            ColumnSchema(
-                name=row[1],
-                data_type=row[2],
-                nullable=not bool(row[3]),
-                default=row[4],
-                primary_key=bool(row[5]),
-                primary_key_position=row[5],
-            )
-            for row in rows
+            row["name"]
+            for row in result.rows
         ]
-
-    def _extract_foreign_keys(
-        self,
-        table_name: str,
-    ) -> list[ForeignKeySchema]:
-        rows = self.connection.execute(
-            f"PRAGMA foreign_key_list({self._quote_identifier(table_name)})"
-        ).fetchall()
-
-        return [
-            ForeignKeySchema(
-                column=row[3],
-                referenced_table=row[2],
-                referenced_column=row[4],
-                on_update=row[5],
-                on_delete=row[6],
-            )
-            for row in rows
-        ]
-
-    def _extract_indexes(
-        self,
-        table_name: str,
-    ) -> list[IndexSchema]:
-        index_rows = self.connection.execute(
-            f"PRAGMA index_list({self._quote_identifier(table_name)})"
-        ).fetchall()
-
-        indexes = []
-
-        for row in index_rows:
-            index_name = row[1]
-            unique = bool(row[2])
-
-            column_rows = self.connection.execute(
-                f"PRAGMA index_info({self._quote_identifier(index_name)})"
-            ).fetchall()
-
-            columns = [
-                column_row[2]
-                for column_row in column_rows
-                if column_row[2] is not None
-            ]
-
-            indexes.append(
-                IndexSchema(
-                    name=index_name,
-                    unique=unique,
-                    columns=columns,
-                )
-            )
-
-        return indexes
 
     @staticmethod
-    def _quote_identifier(identifier: str) -> str:
-        """
-        Safely quote a SQLite identifier.
+    def _validate_limit(limit: int) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError("limit must be an integer")
 
-        Identifiers cannot be parameterized using ? placeholders,
-        so we escape embedded double quotes.
-        """
-        return '"' + identifier.replace('"', '""') + '"'
-
-
-def extract_schema(
-    database_path: str,
-) -> DatabaseSchema:
-    """
-    Convenience function for extracting an entire SQLite database.
-    """
-    connection = sqlite3.connect(database_path)
-
-    try:
-        extractor = SchemaExtractor(connection)
-        return extractor.extract()
-    finally:
-        connection.close()
-
-
-if __name__ == "__main__":
-    schema = extract_schema("./test/test.sqlite")
-
-    for table in schema.tables:
-        print(table.name)
-
-        for column in table.columns:
-            print(
-                column.name,
-                column.data_type,
-                column.nullable,
-                column.primary_key,
+        if limit <= 0:
+            raise ValueError(
+                "limit must be greater than zero"
             )
 
-        for fk in table.foreign_keys:
-            print(
-                fk.column,
-                "->",
-                f"{fk.referenced_table}.{fk.referenced_column}",
+    @staticmethod
+    def _validate_read_only_sql(sql: str) -> None:
+        """
+        Lightweight guard against accidental mutation.
+
+        The action validator/compiler is responsible for determining
+        whether the generated SQL is semantically legal.
+
+        This adapter only enforces the read-only contract.
+        """
+        normalized = sql.lstrip().upper()
+
+        allowed = (
+            normalized.startswith("SELECT"),
+            normalized.startswith("WITH"),
+            normalized.startswith("VALUES"),
+            normalized.startswith("EXPLAIN"),
+        )
+
+        if not any(allowed):
+            raise ValueError(
+                "SQLite adapter only supports read-only SQL"
             )
+
+    @classmethod
+    def _with_limit(
+        cls,
+        sql: str,
+        limit: int,
+    ) -> str:
+        """
+        Bound arbitrary read-only query SQL without modifying its
+        internal structure.
+        """
+        sql = sql.rstrip("; \t\r\n").strip()
+
+        if not sql:
+            raise ValueError("sql cannot be empty")
+
+        return (
+            "SELECT *\n"
+            "FROM (\n"
+            f"{sql}\n"
+            ") AS __preview\n"
+            f"LIMIT {limit}"
+        )
