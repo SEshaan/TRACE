@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, Sequence
+from uuid import uuid4
 
-
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Query lifecycle
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
 class QueryStatus(str, Enum):
@@ -17,17 +17,16 @@ class QueryStatus(str, Enum):
     COMPLETED = "completed"
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Typed actions
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
 class QueryAction(Protocol):
     """
-    Marker protocol for all legal query actions.
+    Marker protocol for legal query actions.
 
-    Concrete actions will be implemented separately:
-
+    Concrete implementations:
         SelectTableAction
         SelectColumnAction
         FilterAction
@@ -41,17 +40,73 @@ class QueryAction(Protocol):
     action_type: str
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Execution / preview models
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class PreviewResult:
+    """
+    Bounded result produced after executing an intermediate query state.
+    """
+
+    columns: tuple[str, ...]
+    rows: tuple[dict[str, Any], ...]
+    row_count: int
+
+    # True when the database returned more rows than were included in `rows`.
+    truncated: bool
+
+    execution_time_ms: float
+
+
+@dataclass(frozen=True)
+class ExecutionResult:
+    """
+    Result of a database execution.
+
+    Used for both intermediate previews and final execution.
+    """
+
+    columns: tuple[str, ...]
+    rows: tuple[dict[str, Any], ...]
+    row_count: int
+    execution_time_ms: float
+
+
+@dataclass(frozen=True)
+class ActionFailure:
+    """
+    Structured failure information.
+
+    Keeping failures typed makes them easier to persist, inspect,
+    display in React Flow, and recover from.
+    """
+
+    action_type: str
+    code: str
+    message: str
+
+
+# ============================================================================
 # Query state
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
 @dataclass(frozen=True)
 class QueryState:
     """
-    Immutable representation of the query at one point in the action graph.
+    Immutable representation of a query at one point in the graph.
 
-    The state is produced by the QueryStateEngine, not by the handler.
+    Every successful action creates a new state.
+
+    parent_id establishes the graph relationship:
+
+        parent state
+              |
+              v
+        current state
     """
 
     id: str
@@ -61,66 +116,81 @@ class QueryState:
 
     status: QueryStatus
 
-    # The compiled SQL for this state, if one exists.
+    # Compiled SQL corresponding to this state.
     sql: str | None = None
 
-    # Most recent preview/execution result.
-    result: Any | None = None
+    # Most recent bounded execution result.
+    preview: PreviewResult | None = None
 
 
 @dataclass(frozen=True)
 class Checkpoint:
+    """
+    A named recovery point in the query graph.
+    """
+
     id: str
     state_id: str
+    label: str | None = None
+
+
+# ============================================================================
+# Action result
+# ============================================================================
 
 
 @dataclass(frozen=True)
 class ActionResult:
     """
-    Result returned after attempting to apply an action.
+    Result of attempting to apply one action.
     """
 
     state: QueryState
 
-    success: bool
+    preview: PreviewResult | None = None
 
-    error: str | None = None
+    failure: ActionFailure | None = None
 
-    # SQL generated for this action/state.
-    sql: str | None = None
+    @property
+    def success(self) -> bool:
+        return self.failure is None
 
-    # Bounded intermediate result.
-    preview: Any | None = None
 
-    # Execution metadata.
-    execution_time_ms: float | None = None
+# ============================================================================
+# Final query result
+# ============================================================================
 
 
 @dataclass(frozen=True)
 class QueryResult:
     """
-    Final FINISH result.
+    Final result returned after FINISH.
     """
 
     state: QueryState
 
     sql: str
 
-    columns: list[str]
+    columns: tuple[str, ...]
 
-    rows: list[dict[str, Any]]
+    rows: tuple[dict[str, Any], ...]
 
     row_count: int
 
     execution_time_ms: float
 
 
+# ============================================================================
+# Session / trace
+# ============================================================================
+
+
 @dataclass(frozen=True)
 class QuerySession:
     """
-    Represents one user-level query.
+    Represents a user-level query.
 
-    A session may contain multiple query-state branches.
+    A session may contain multiple branches of QueryState.
     """
 
     id: str
@@ -133,13 +203,13 @@ class QuerySession:
 
     status: QueryStatus
 
+    model_version: str | None = None
+
 
 @dataclass(frozen=True)
 class QueryTrace:
     """
-    Complete execution history.
-
-    The concrete graph representation belongs to the trace store.
+    Complete persisted execution history for a session.
     """
 
     session: QuerySession
@@ -148,23 +218,24 @@ class QueryTrace:
 
     checkpoints: Sequence[Checkpoint]
 
-    failures: Sequence[Any]
+    failures: Sequence[ActionFailure]
 
 
-# ---------------------------------------------------------------------------
-# Offloaded components
-# ---------------------------------------------------------------------------
+# ============================================================================
+# Decision model
+# ============================================================================
 
 
 class DecisionModel(Protocol):
     """
-    Converts natural language/context into a typed action.
+    Converts natural language + current state into a legal typed action.
 
-    The decision model does NOT execute anything.
+    The decision model never generates or executes SQL directly.
     """
 
     def decide(
         self,
+        *,
         request: str,
         state: QueryState,
         environment: Any,
@@ -172,13 +243,19 @@ class DecisionModel(Protocol):
         ...
 
 
+# ============================================================================
+# Query state engine
+# ============================================================================
+
+
 class QueryStateEngine(Protocol):
     """
-    Produces the next immutable query state from an action.
+    Applies typed actions to immutable query states.
     """
 
     def apply(
         self,
+        *,
         state: QueryState,
         action: QueryAction,
     ) -> QueryState:
@@ -186,20 +263,27 @@ class QueryStateEngine(Protocol):
 
     def branch(
         self,
+        *,
         state: QueryState,
     ) -> QueryState:
         ...
 
 
+# ============================================================================
+# Deterministic validator
+# ============================================================================
+
+
 class Validator(Protocol):
     """
-    Deterministic action validator.
+    Deterministic validation boundary.
 
-    No LLM decisions should happen here.
+    No LLM reasoning should happen here.
     """
 
     def validate(
         self,
+        *,
         action: QueryAction,
         state: QueryState,
         environment: Any,
@@ -207,94 +291,102 @@ class Validator(Protocol):
         ...
 
 
+# ============================================================================
+# SQL compiler
+# ============================================================================
+
+
 class SQLCompiler(Protocol):
     """
-    Converts a validated query state into SQL.
+    Compiles a validated QueryState into parameterized SQL.
+
+    The compiler owns SQL generation.
+    The decision model does not.
     """
 
     def compile(
         self,
+        *,
         state: QueryState,
     ) -> tuple[str, tuple[Any, ...]]:
         ...
 
 
+# ============================================================================
+# Database
+# ============================================================================
+
+
 class DatabaseAdapter(Protocol):
     """
-    Read-only database execution interface.
+    Database execution boundary.
+
+    The handler does not know whether the implementation is SQLite,
+    PostgreSQL, etc.
     """
 
-    def preview(
+    def execute(
         self,
         sql: str,
         parameters: Sequence[Any] = (),
         *,
-        limit: int = 50,
-    ) -> Any:
+        max_rows: int | None = None,
+    ) -> ExecutionResult:
         ...
 
-    def query(
-        self,
-        sql: str,
-        parameters: Sequence[Any] = (),
-    ) -> Any:
+
+# ============================================================================
+# Schema provider
+# ============================================================================
+
+
+class SchemaProvider(Protocol):
+    """
+    Provides the environment available to the decision model and validator.
+
+    This can later expose:
+        - tables
+        - columns
+        - types
+        - relationships
+        - constraints
+        - permissions
+    """
+
+    def get_schema(self) -> Any:
         ...
+
+
+# ============================================================================
+# Trace store
+# ============================================================================
 
 
 class TraceStore(Protocol):
     """
     Persistence boundary.
 
-    The handler should not know whether this eventually uses SQLite,
-    PostgreSQL, etc.
+    The handler does not know whether this is backed by SQLite,
+    PostgreSQL, or another RDBMS.
     """
+
+    # ------------------------------------------------------------------
+    # Sessions
+    # ------------------------------------------------------------------
 
     def create_session(
         self,
+        *,
         request: str,
         root_state: QueryState,
+        model_version: str | None = None,
     ) -> QuerySession:
         ...
 
-    def save_state(
+    def get_session(
         self,
         session_id: str,
-        state: QueryState,
-    ) -> None:
-        ...
-
-    def save_failure(
-        self,
-        session_id: str,
-        state_id: str,
-        action: QueryAction,
-        error: str,
-    ) -> None:
-        ...
-
-    def save_checkpoint(
-        self,
-        session_id: str,
-        checkpoint: Checkpoint,
-    ) -> None:
-        ...
-
-    def get_state(
-        self,
-        state_id: str,
-    ) -> QueryState:
-        ...
-
-    def get_checkpoint(
-        self,
-        checkpoint_id: str,
-    ) -> Checkpoint:
-        ...
-
-    def get_trace(
-        self,
-        session_id: str,
-    ) -> QueryTrace:
+    ) -> QuerySession:
         ...
 
     def update_session(
@@ -306,33 +398,101 @@ class TraceStore(Protocol):
     ) -> None:
         ...
 
+    # ------------------------------------------------------------------
+    # States
+    # ------------------------------------------------------------------
 
-class SchemaProvider(Protocol):
-    """
-    Provides the environment available to the decision model and validator.
-    """
+    def save_state(
+        self,
+        session_id: str,
+        state: QueryState,
+    ) -> None:
+        ...
 
-    def get_schema(self) -> Any:
+    def get_state(
+        self,
+        state_id: str,
+    ) -> QueryState:
+        ...
+
+    # ------------------------------------------------------------------
+    # Failures
+    # ------------------------------------------------------------------
+
+    def save_failure(
+        self,
+        *,
+        session_id: str,
+        state_id: str,
+        action: QueryAction,
+        failure: ActionFailure,
+    ) -> None:
+        ...
+
+    # ------------------------------------------------------------------
+    # Checkpoints
+    # ------------------------------------------------------------------
+
+    def save_checkpoint(
+        self,
+        *,
+        session_id: str,
+        checkpoint: Checkpoint,
+    ) -> None:
+        ...
+
+    def get_checkpoint(
+        self,
+        checkpoint_id: str,
+    ) -> Checkpoint:
+        ...
+
+    # ------------------------------------------------------------------
+    # Trace
+    # ------------------------------------------------------------------
+
+    def get_trace(
+        self,
+        session_id: str,
+    ) -> QueryTrace:
         ...
 
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # Query Handler
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 
 class QueryHandler:
     """
-    Orchestrates the complete query lifecycle.
+    Orchestrates the query execution lifecycle.
 
-    The handler deliberately contains no:
-      - SQL generation
-      - validation rules
-      - LLM logic
-      - database-specific logic
-      - persistence implementation
+    The handler coordinates components but does not own their logic.
 
-    It coordinates those components.
+    Responsibilities:
+
+        Natural language request
+                ↓
+        DecisionModel
+                ↓
+        Typed QueryAction
+                ↓
+        Validator
+                ↓
+        QueryStateEngine
+                ↓
+        SQLCompiler
+                ↓
+        DatabaseAdapter
+                ↓
+        TraceStore
+
+    The handler intentionally contains no:
+        - SQL generation
+        - validation rules
+        - LLM implementation
+        - database-specific code
+        - persistence implementation
     """
 
     def __init__(
@@ -346,7 +506,11 @@ class QueryHandler:
         trace_store: TraceStore,
         schema_provider: SchemaProvider,
         preview_limit: int = 50,
+        model_version: str | None = None,
     ):
+        if preview_limit <= 0:
+            raise ValueError("preview_limit must be greater than zero")
+
         self.decision_model = decision_model
         self.state_engine = state_engine
         self.validator = validator
@@ -354,20 +518,25 @@ class QueryHandler:
         self.database = database
         self.trace_store = trace_store
         self.schema_provider = schema_provider
-        self.preview_limit = preview_limit
 
-    # ------------------------------------------------------------------
+        self.preview_limit = preview_limit
+        self.model_version = model_version
+
+    # ======================================================================
     # Session lifecycle
-    # ------------------------------------------------------------------
+    # ======================================================================
 
     def create(
         self,
         request: str,
     ) -> QuerySession:
         """
-        Create a new query session with an empty/root state.
+        Create a new query session with an empty root state.
         """
-        if not request.strip():
+
+        request = request.strip()
+
+        if not request:
             raise ValueError("query request cannot be empty")
 
         root_state = QueryState(
@@ -380,6 +549,7 @@ class QueryHandler:
         session = self.trace_store.create_session(
             request=request,
             root_state=root_state,
+            model_version=self.model_version,
         )
 
         self.trace_store.save_state(
@@ -399,22 +569,25 @@ class QueryHandler:
             root_state_id=session.root_state_id,
             current_state_id=root_state.id,
             status=QueryStatus.ACTIVE,
+            model_version=session.model_version,
         )
 
-    # ------------------------------------------------------------------
+    # ======================================================================
     # Decision
-    # ------------------------------------------------------------------
+    # ======================================================================
 
     def next_action(
         self,
         session_id: str,
     ) -> QueryAction:
         """
-        Ask the decision model for the next action.
+        Ask the decision model for the next typed action.
 
-        No execution happens here.
+        This method does not execute the action.
         """
-        session = self._get_session(session_id)
+
+        session = self.trace_store.get_session(session_id)
+
         state = self.trace_store.get_state(
             session.current_state_id,
         )
@@ -427,9 +600,9 @@ class QueryHandler:
             environment=environment,
         )
 
-    # ------------------------------------------------------------------
-    # Action execution
-    # ------------------------------------------------------------------
+    # ======================================================================
+    # Apply action
+    # ======================================================================
 
     def apply_action(
         self,
@@ -437,7 +610,7 @@ class QueryHandler:
         action: QueryAction,
     ) -> ActionResult:
         """
-        Execute one typed query action.
+        Validate and apply one typed query action.
 
         Pipeline:
 
@@ -449,11 +622,12 @@ class QueryHandler:
               ↓
             compile
               ↓
-            preview
+            execute preview
               ↓
-            persist
+            persist state
         """
-        session = self._get_session(session_id)
+
+        session = self.trace_store.get_session(session_id)
 
         current_state = self.trace_store.get_state(
             session.current_state_id,
@@ -461,9 +635,9 @@ class QueryHandler:
 
         environment = self.schema_provider.get_schema()
 
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
         # Deterministic validation
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
 
         try:
             self.validator.validate(
@@ -471,14 +645,18 @@ class QueryHandler:
                 state=current_state,
                 environment=environment,
             )
+
         except Exception as exc:
-            error = str(exc)
+            failure = self._validation_failure(
+                action=action,
+                error=exc,
+            )
 
             self.trace_store.save_failure(
                 session_id=session_id,
                 state_id=current_state.id,
                 action=action,
-                error=error,
+                failure=failure,
             )
 
             self.trace_store.update_session(
@@ -489,96 +667,181 @@ class QueryHandler:
 
             return ActionResult(
                 state=current_state,
-                success=False,
-                error=error,
+                failure=failure,
             )
 
-        # --------------------------------------------------------------
-        # Produce next state
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # State transition
+        # ------------------------------------------------------------------
 
-        next_state = self.state_engine.apply(
-            current_state,
-            action,
-        )
+        try:
+            next_state = self.state_engine.apply(
+                state=current_state,
+                action=action,
+            )
 
-        # --------------------------------------------------------------
-        # Compile
-        # --------------------------------------------------------------
+        except Exception as exc:
+            failure = ActionFailure(
+                action_type=action.action_type,
+                code="STATE_TRANSITION_FAILED",
+                message=str(exc),
+            )
 
-        sql, parameters = self.compiler.compile(
-            next_state,
-        )
+            self.trace_store.save_failure(
+                session_id=session_id,
+                state_id=current_state.id,
+                action=action,
+                failure=failure,
+            )
 
-        # --------------------------------------------------------------
+            self.trace_store.update_session(
+                session_id,
+                current_state_id=current_state.id,
+                status=QueryStatus.FAILED,
+            )
+
+            return ActionResult(
+                state=current_state,
+                failure=failure,
+            )
+
+        # ------------------------------------------------------------------
+        # SQL compilation
+        # ------------------------------------------------------------------
+
+        try:
+            sql, parameters = self.compiler.compile(
+                state=next_state,
+            )
+
+        except Exception as exc:
+            failure = ActionFailure(
+                action_type=action.action_type,
+                code="SQL_COMPILATION_FAILED",
+                message=str(exc),
+            )
+
+            self.trace_store.save_failure(
+                session_id=session_id,
+                state_id=next_state.id,
+                action=action,
+                failure=failure,
+            )
+
+            self.trace_store.update_session(
+                session_id,
+                current_state_id=current_state.id,
+                status=QueryStatus.FAILED,
+            )
+
+            return ActionResult(
+                state=current_state,
+                failure=failure,
+            )
+
+        # ------------------------------------------------------------------
         # Intermediate execution
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------------
 
-        preview = self.database.preview(
-            sql,
-            parameters,
-            limit=self.preview_limit,
-        )
+        try:
+            execution = self.database.execute(
+                sql,
+                parameters,
+                max_rows=self.preview_limit,
+            )
 
-        # --------------------------------------------------------------
-        # Persist state
-        # --------------------------------------------------------------
+        except Exception as exc:
+            failure = ActionFailure(
+                action_type=action.action_type,
+                code="DATABASE_EXECUTION_FAILED",
+                message=str(exc),
+            )
 
-        next_state = QueryState(
+            self.trace_store.save_failure(
+                session_id=session_id,
+                state_id=next_state.id,
+                action=action,
+                failure=failure,
+            )
+
+            self.trace_store.update_session(
+                session_id,
+                current_state_id=current_state.id,
+                status=QueryStatus.FAILED,
+            )
+
+            return ActionResult(
+                state=current_state,
+                failure=failure,
+            )
+
+        # ------------------------------------------------------------------
+        # Build preview
+        # ------------------------------------------------------------------
+
+        preview = self._to_preview(execution)
+
+        persisted_state = QueryState(
             id=next_state.id,
             parent_id=next_state.parent_id,
             actions=next_state.actions,
             status=QueryStatus.ACTIVE,
             sql=sql,
-            result=preview.result,
+            preview=preview,
         )
+
+        # ------------------------------------------------------------------
+        # Persist successful state
+        # ------------------------------------------------------------------
 
         self.trace_store.save_state(
             session_id,
-            next_state,
+            persisted_state,
         )
 
         self.trace_store.update_session(
             session_id,
-            current_state_id=next_state.id,
+            current_state_id=persisted_state.id,
             status=QueryStatus.ACTIVE,
         )
 
         return ActionResult(
-            state=next_state,
-            success=True,
-            sql=sql,
-            preview=preview.result,
+            state=persisted_state,
+            preview=preview,
         )
 
-    # ------------------------------------------------------------------
+    # ======================================================================
     # Checkpoints
-    # ------------------------------------------------------------------
+    # ======================================================================
 
     def checkpoint(
         self,
         session_id: str,
+        *,
+        label: str | None = None,
     ) -> Checkpoint:
         """
         Mark the current state as a recovery point.
         """
-        session = self._get_session(session_id)
+
+        session = self.trace_store.get_session(session_id)
 
         checkpoint = Checkpoint(
             id=self._new_id(),
             state_id=session.current_state_id,
+            label=label,
         )
 
         self.trace_store.save_checkpoint(
-            session_id,
-            checkpoint,
+            session_id=session_id,
+            checkpoint=checkpoint,
         )
 
         return checkpoint
 
-    # ------------------------------------------------------------------
+    # ======================================================================
     # Recovery
-    # ------------------------------------------------------------------
+    # ======================================================================
 
     def recover(
         self,
@@ -587,10 +850,14 @@ class QueryHandler:
         correction: QueryAction | Sequence[QueryAction],
     ) -> ActionResult:
         """
-        Create a new branch from a checkpoint and apply the correction.
+        Recompute from a checkpoint.
 
-        Existing failed/superseded paths remain in the trace.
+        The existing path is never deleted.
+
+        A new branch is created from the checkpoint state and the
+        correction is applied to that branch.
         """
+
         checkpoint = self.trace_store.get_checkpoint(
             checkpoint_id,
         )
@@ -599,17 +866,24 @@ class QueryHandler:
             checkpoint.state_id,
         )
 
+        # Create an explicit branch state.
+
+        branch_state = self.state_engine.branch(
+            state=checkpoint_state,
+        )
+
+        self.trace_store.save_state(
+            session_id,
+            branch_state,
+        )
+
         self.trace_store.update_session(
             session_id,
-            current_state_id=checkpoint_state.id,
+            current_state_id=branch_state.id,
             status=QueryStatus.ACTIVE,
         )
 
-        actions = (
-            [correction]
-            if not isinstance(correction, Sequence)
-            else list(correction)
-        )
+        actions = self._normalize_actions(correction)
 
         result: ActionResult | None = None
 
@@ -624,14 +898,14 @@ class QueryHandler:
 
         if result is None:
             raise ValueError(
-                "recovery requires at least one correction"
+                "recovery requires at least one correction",
             )
 
         return result
 
-    # ------------------------------------------------------------------
+    # ======================================================================
     # Final execution
-    # ------------------------------------------------------------------
+    # ======================================================================
 
     def finish(
         self,
@@ -640,55 +914,85 @@ class QueryHandler:
         """
         Execute the current query as the final result.
 
-        FINISH itself is represented by the lifecycle transition rather
-        than by adding arbitrary SQL to the query.
+        The current state is compiled and executed without a preview row
+        limit.
         """
-        session = self._get_session(session_id)
+
+        session = self.trace_store.get_session(session_id)
 
         state = self.trace_store.get_state(
             session.current_state_id,
         )
 
+        if not state.actions:
+            raise ValueError(
+                "cannot finish an empty query",
+            )
+
+        # ------------------------------------------------------------------
+        # Compile
+        # ------------------------------------------------------------------
+
         sql, parameters = self.compiler.compile(
-            state,
+            state=state,
         )
 
-        result = self.database.query(
+        # ------------------------------------------------------------------
+        # Final database execution
+        # ------------------------------------------------------------------
+
+        execution = self.database.execute(
             sql,
             parameters,
+            max_rows=None,
+        )
+
+        # ------------------------------------------------------------------
+        # Persist completed state
+        # ------------------------------------------------------------------
+
+        completed_state = QueryState(
+            id=state.id,
+            parent_id=state.parent_id,
+            actions=state.actions,
+            status=QueryStatus.COMPLETED,
+            sql=sql,
+            preview=None,
+        )
+
+        self.trace_store.save_state(
+            session_id,
+            completed_state,
         )
 
         self.trace_store.update_session(
             session_id,
-            current_state_id=state.id,
+            current_state_id=completed_state.id,
             status=QueryStatus.COMPLETED,
         )
 
         return QueryResult(
-            state=QueryState(
-                id=state.id,
-                parent_id=state.parent_id,
-                actions=state.actions,
-                status=QueryStatus.COMPLETED,
-                sql=sql,
-                result=result,
-            ),
+            state=completed_state,
             sql=sql,
-            columns=result.columns,
-            rows=result.rows,
-            row_count=result.row_count,
-            execution_time_ms=0.0,
+            columns=execution.columns,
+            rows=execution.rows,
+            row_count=execution.row_count,
+            execution_time_ms=execution.execution_time_ms,
         )
 
-    # ------------------------------------------------------------------
+    # ======================================================================
     # Inspection
-    # ------------------------------------------------------------------
+    # ======================================================================
 
     def get_state(
         self,
         session_id: str,
     ) -> QueryState:
-        session = self._get_session(session_id)
+        """
+        Get the current query state.
+        """
+
+        session = self.trace_store.get_session(session_id)
 
         return self.trace_store.get_state(
             session.current_state_id,
@@ -698,34 +1002,73 @@ class QueryHandler:
         self,
         session_id: str,
     ) -> QueryTrace:
-        return self.trace_store.get_trace(
-            session_id,
-        )
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _get_session(
-        self,
-        session_id: str,
-    ) -> QuerySession:
         """
-        This will eventually be a TraceStore lookup.
-
-        Kept isolated so the handler has only one persistence boundary.
+        Get the complete execution trace for a session.
         """
-        trace = self.trace_store.get_trace(session_id)
 
-        return trace.session
+        return self.trace_store.get_trace(session_id)
+
+    # ======================================================================
+    # Helpers
+    # ======================================================================
 
     @staticmethod
     def _new_id() -> str:
-        """
-        Temporary ID generation.
+        return str(uuid4())
 
-        Replace with the project's ID strategy later.
+    @staticmethod
+    def _normalize_actions(
+        correction: QueryAction | Sequence[QueryAction],
+    ) -> tuple[QueryAction, ...]:
         """
-        import uuid
+        Normalize one correction or multiple corrections into a tuple.
 
-        return str(uuid.uuid4())
+        QueryAction itself is a Protocol, so we deliberately do not use
+        isinstance() here.
+        """
+
+        if isinstance(correction, (list, tuple)):
+            actions = tuple(correction)
+
+        else:
+            actions = (correction,)
+
+        if not actions:
+            raise ValueError(
+                "recovery requires at least one correction",
+            )
+
+        return actions
+
+    @staticmethod
+    def _to_preview(
+        execution: ExecutionResult,
+    ) -> PreviewResult:
+        """
+        Convert an execution result into the bounded preview representation.
+        """
+
+        # The database adapter is responsible for enforcing max_rows.
+        # Therefore a row count greater than the number of returned rows
+        # means the result was truncated.
+        truncated = execution.row_count > len(execution.rows)
+
+        return PreviewResult(
+            columns=execution.columns,
+            rows=execution.rows,
+            row_count=execution.row_count,
+            truncated=truncated,
+            execution_time_ms=execution.execution_time_ms,
+        )
+
+    @staticmethod
+    def _validation_failure(
+        *,
+        action: QueryAction,
+        error: Exception,
+    ) -> ActionFailure:
+        return ActionFailure(
+            action_type=action.action_type,
+            code="VALIDATION_FAILED",
+            message=str(error),
+        )
