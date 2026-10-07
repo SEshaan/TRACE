@@ -73,12 +73,14 @@ class AgentController(DecisionModel):
         request: str,
         state: QueryState,
         environment: Any,
+        graph_context: dict | None = None,
     ) -> QueryAction:
         """Forward decision request to active model."""
         return self.current_model.decide(
             request=request,
             state=state,
             environment=environment,
+            graph_context=graph_context,
         )
 
 

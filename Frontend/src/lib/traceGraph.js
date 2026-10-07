@@ -159,6 +159,9 @@ export function buildGraph(trace) {
       actionType: action?.type ?? null,
       params: action?.params ?? null,
       confidence: action?.confidence ?? state.decision?.confidence ?? null,
+      // The original natural-language request, threaded to the start node so it
+      // can render as a distinct "START" card instead of a generic ACTION.
+      request: normalized.session?.request ?? null,
       decision: state.decision ?? null,
       label: action?.type ? describeAction(action.type, action.params ?? {}) : null,
 

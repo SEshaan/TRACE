@@ -142,6 +142,41 @@ describe('queryStore — the run loop', () => {
     expect(store.getState().error.message).toContain('3 steps');
   });
 
+  it('treats a graceful agent decline as terminal and lands in phase declined', async () => {
+    scriptRun([
+      { action_type: 'SELECT_TABLE', parameters: { table: 'students' } },
+      {
+        action_type: 'ABORT_QUERY',
+        parameters: { reason: 'No table matches the requested entities.' },
+      },
+    ]);
+
+    await store.startRun('select students', { stepDelayMs: 0 });
+
+    const state = store.getState();
+    expect(state.run.phase).toBe('declined');
+    // isDeclined / isFailed are hook-level selectors derived from run.phase;
+    // the raw slice only carries phase, so assert on that.
+    expect(state.error.message).toContain('No table matches');
+    // the loop must not continue past the decline
+    expect(state.run.stepIndex).toBe(2);
+  });
+
+  it('surfaces the clarification text for an INSUFFICIENT_INFO decline', async () => {
+    scriptRun([
+      { action_type: 'SELECT_TABLE', parameters: { table: 'students' } },
+      {
+        action_type: 'INSUFFICIENT_INFO',
+        parameters: { reason: 'Which year?', clarification: 'The graduation year.' },
+      },
+    ]);
+
+    await store.startRun('select students', { stepDelayMs: 0 });
+
+    expect(store.getState().run.phase).toBe('declined');
+    expect(store.getState().error.message).toContain('Which year?');
+  });
+
   it('parks in phase paused in step mode and advances one step at a time', async () => {
     scriptRun([
       { action_type: 'SELECT_TABLE', parameters: { table: 'students' } },

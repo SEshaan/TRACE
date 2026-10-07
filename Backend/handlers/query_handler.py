@@ -241,8 +241,72 @@ class DecisionModel(Protocol):
         request: str,
         state: QueryState,
         environment: Any,
+        graph_context: dict | None = None,
     ) -> QueryAction:
         ...
+
+
+def _ancestors_of(state_id, states_by_id):
+    """Ordered ancestor chain (nearest first) for a state id."""
+    chain = []
+    seen = set()
+    current = states_by_id.get(state_id)
+    while current is not None and current.id not in seen:
+        seen.add(current.id)
+        chain.append(current)
+        parent = states_by_id.get(current.parent_id) if current.parent_id else None
+        current = parent
+    return chain
+
+
+def build_graph_context(session, states, checkpoints, failures):
+    """
+    Compact awareness of the *whole* query graph for the decision model.
+
+    The linear `state.actions` only describes the current path. This adds:
+      - sibling_actions: alternative action types already tried at each depth
+        (rejected / abandoned branches off the same ancestor).
+      - recent_failures: the most recent failed actions (rejected work).
+      - is_recovered_branch: whether we are on a branch that recovered from a
+        checkpoint and moved past it.
+
+    This lets the model avoid repeating an action that was already tried and
+    dropped, instead of guessing as if every step were fresh.
+    """
+    states_by_id = {s.id: s for s in states}
+    current_id = session.current_state_id
+
+    ancestors = _ancestors_of(current_id, states_by_id)
+    ancestor_ids = {a.id for a in ancestors}
+
+    # Checkpoints whose state is an *ancestor* of the current node means we
+    # branched off that checkpoint and moved past it -> recovered branch.
+    cp_state_ids = {c.state_id for c in checkpoints}
+    is_recovered_branch = bool(cp_state_ids & ancestor_ids)
+
+    # Alternatives = states not on the current path. Group their action types
+    # by depth so the model knows what was already tried at each level.
+    sibling_actions = {}
+    for s in states:
+        if s.id in ancestor_ids or s.id == current_id:
+            continue
+        depth = len(_ancestors_of(s.id, states_by_id))
+        action_type = getattr(s.actions[-1], "action_type", None) if s.actions else None
+        if not action_type:
+            continue
+        sibling_actions.setdefault(depth, set()).add(action_type)
+    sibling_actions = {int(d): sorted(types) for d, types in sibling_actions.items()}
+
+    recent_failures = [
+        {"action_type": f.action_type, "code": f.code}
+        for f in list(failures)[-5:]
+    ]
+
+    return {
+        "is_recovered_branch": is_recovered_branch,
+        "sibling_actions": sibling_actions,
+        "recent_failures": recent_failures,
+    }
 
 
 # ============================================================================
@@ -605,10 +669,18 @@ class QueryHandler:
 
         environment = self.schema_provider.get_schema()
 
+        # Full graph context so the model can avoid repeating rejected work on
+        # sibling branches and after backtracking from a checkpoint.
+        trace = self.trace_store.get_trace(session_id)
+        graph_context = build_graph_context(
+            session, trace.states, trace.checkpoints, trace.failures,
+        )
+
         return self.decision_model.decide(
             request=session.request,
             state=state,
             environment=environment,
+            graph_context=graph_context,
         )
 
     # ======================================================================
