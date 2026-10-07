@@ -4,6 +4,7 @@ import {
   createCheckpoint,
   createSession,
   getSession,
+  getSchema,
   getTrace,
   listSessions,
   recover,
@@ -182,5 +183,13 @@ describe('successful responses are normalized', () => {
     const checkpoint = await createCheckpoint('sess-1', 'legacy');
     expect(JSON.parse(calls[0].init.body)).toEqual({ label: 'legacy' });
     expect(checkpoint.label).toBe('legacy');
+  });
+
+  it('fetches schema from backend', async () => {
+    const mockSchema = { tables: [{ name: 'students', columns: [{ name: 'id', data_type: 'INTEGER' }] }] };
+    global.__responder = () => ok(mockSchema);
+    const result = await getSchema();
+    expect(result).toEqual(mockSchema);
+    expect(calls[0].url).toContain('/queries/schema');
   });
 });

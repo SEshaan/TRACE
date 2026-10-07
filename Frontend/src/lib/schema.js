@@ -13,13 +13,25 @@
 /** @type {{ tables: Array<{ name: string, columns: string[] }> } | null} */
 let cachedSchema = null;
 
+import { getSchema as fetchSchemaApi } from '../api/client';
+
 /**
- * Install a schema (from GET /queries/{id}/schema once it exists,
+ * Install a schema (from GET /queries/schema,
  * or from a fixture during offline development).
  */
 export function setSchema(schema) {
   cachedSchema = schema ? normalizeSchema(schema) : null;
   return cachedSchema;
+}
+
+export async function loadSchema(options = {}) {
+  try {
+    const data = await fetchSchemaApi(options);
+    if (data) return setSchema(data);
+  } catch (err) {
+    // Graceful fallback to partial trace derivation
+  }
+  return null;
 }
 
 export function clearSchema() {

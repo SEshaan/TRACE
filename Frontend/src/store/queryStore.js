@@ -20,7 +20,7 @@ import { useSyncExternalStore } from 'react';
 import * as api from '../api/client';
 import { API_ERROR, ApiError } from '../api/errors';
 import { buildGraph } from '../lib/traceGraph';
-import { schemaFromTrace, setSchema } from '../lib/schema';
+import { schemaFromTrace, setSchema, loadSchema } from '../lib/schema';
 import { DEMO_FAILURE_ACTION, MAX_RUN_STEPS, STEP_DELAY_MS } from '../constants/backend';
 
 /* -------------------------------------------------------------- state ---- */
@@ -131,6 +131,9 @@ export async function probe() {
   try {
     const capabilities = await api.probeCapabilities();
     patch('capabilities', (prev) => ({ ...prev, ...capabilities }));
+    if (capabilities.schema) {
+      await loadSchema().catch(() => {});
+    }
     return capabilities;
   } finally {
     busy('probe', false);
@@ -626,4 +629,4 @@ export function reset() {
 
 /* ------------------------------------------------- schema (advisory) ------ */
 
-export { setSchema };
+export { setSchema, loadSchema };

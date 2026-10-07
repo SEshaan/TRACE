@@ -89,7 +89,7 @@ class SQLiteTraceStore(TraceStore):
                 INSERT INTO query_sessions (id, request, root_state_id, current_state_id, status, model_version_id)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (session.id, session.request, session.root_state_id, session.current_state_id, session.status.value, model_version),
+                (session_id, request, root_state.id, root_state.id, QueryStatus.NEW.value, model_version),
             )
             # Log training sample starter
             conn.execute(
@@ -97,9 +97,25 @@ class SQLiteTraceStore(TraceStore):
                 INSERT INTO training_samples (id, session_id, natural_language_request, state_context_json, target_action_json)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (str(uuid.uuid4()), session.id, request, "{}", "{}"),
+                (str(uuid.uuid4()), session_id, request, "{}", "{}"),
             )
-        return session
+            row = conn.execute(
+                "SELECT created_at, updated_at FROM query_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            created_at = row["created_at"] if row else None
+            updated_at = row["updated_at"] if row else None
+
+        return QuerySession(
+            id=session_id,
+            request=request,
+            root_state_id=root_state.id,
+            current_state_id=root_state.id,
+            status=QueryStatus.NEW,
+            model_version=model_version,
+            created_at=created_at,
+            updated_at=updated_at,
+        )
 
     def get_session(self, session_id: str) -> QuerySession:
         with self._get_connection() as conn:
@@ -116,6 +132,8 @@ class SQLiteTraceStore(TraceStore):
                 current_state_id=row["current_state_id"],
                 status=QueryStatus(row["status"]),
                 model_version=row["model_version_id"],
+                created_at=row["created_at"] if "created_at" in row.keys() else None,
+                updated_at=row["updated_at"] if "updated_at" in row.keys() else None,
             )
 
     def update_session(
@@ -134,6 +152,52 @@ class SQLiteTraceStore(TraceStore):
                 """,
                 (current_state_id, status.value, session_id),
             )
+
+    def list_sessions(
+        self,
+        *,
+        status: str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT 
+                s.id,
+                s.request,
+                s.status,
+                s.model_version_id,
+                s.created_at,
+                s.updated_at,
+                (SELECT COUNT(*) FROM query_states qs WHERE qs.session_id = s.id) AS state_count,
+                (SELECT COUNT(*) FROM failure_logs fl WHERE fl.session_id = s.id) AS failure_count
+            FROM query_sessions s
+            WHERE 1=1
+        """
+        params: list[Any] = []
+        if status:
+            query += " AND s.status = ?"
+            params.append(status)
+        if q:
+            query += " AND s.request LIKE ?"
+            params.append(f"%{q}%")
+        query += " ORDER BY s.created_at DESC LIMIT ?"
+        params.append(limit)
+
+        with self._get_connection() as conn:
+            rows = conn.execute(query, tuple(params)).fetchall()
+            return [
+                {
+                    "id": r["id"],
+                    "request": r["request"],
+                    "status": r["status"],
+                    "model_version": r["model_version_id"],
+                    "created_at": r["created_at"],
+                    "updated_at": r["updated_at"],
+                    "state_count": r["state_count"],
+                    "has_failure": r["failure_count"] > 0,
+                }
+                for r in rows
+            ]
 
     # ------------------------------------------------------------------
     # States

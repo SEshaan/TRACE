@@ -18,6 +18,7 @@ export const EP = {
   finish: (id) => ({ method: 'POST', path: `/queries/${id}/finish` }),
   trace: (id) => ({ method: 'GET', path: `/queries/${id}/trace` }),
   listSessions: { method: 'GET', path: '/queries' },
+  schema: { method: 'GET', path: '/queries/schema' },
 
   agentStatus: { method: 'GET', path: '/queries/agent/status' },
   agentSelect: { method: 'POST', path: '/queries/agent/select' },

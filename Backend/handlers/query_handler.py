@@ -204,6 +204,8 @@ class QuerySession:
     status: QueryStatus
 
     model_version: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -396,6 +398,15 @@ class TraceStore(Protocol):
         current_state_id: str,
         status: QueryStatus,
     ) -> None:
+        ...
+
+    def list_sessions(
+        self,
+        *,
+        status: str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+    ) -> Sequence[dict[str, Any]]:
         ...
 
     # ------------------------------------------------------------------
@@ -811,6 +822,21 @@ class QueryHandler:
         )
 
     # ======================================================================
+    # Step
+    # ======================================================================
+
+    def step(
+        self,
+        session_id: str,
+    ) -> tuple[ActionResult, QueryAction]:
+        """
+        Decide the next action and apply it in a single step.
+        """
+        action = self.next_action(session_id)
+        result = self.apply_action(session_id, action)
+        return result, action
+
+    # ======================================================================
     # Checkpoints
     # ======================================================================
 
@@ -818,17 +844,22 @@ class QueryHandler:
         self,
         session_id: str,
         *,
+        state_id: str | None = None,
         label: str | None = None,
     ) -> Checkpoint:
         """
-        Mark the current state as a recovery point.
+        Mark a specific state (or current state if None) as a recovery point.
         """
 
         session = self.trace_store.get_session(session_id)
+        target_state_id = state_id if state_id is not None else session.current_state_id
+
+        # Verify target state exists
+        self.trace_store.get_state(target_state_id)
 
         checkpoint = Checkpoint(
             id=self._new_id(),
-            state_id=session.current_state_id,
+            state_id=target_state_id,
             label=label,
         )
 
@@ -838,6 +869,22 @@ class QueryHandler:
         )
 
         return checkpoint
+
+    # ======================================================================
+    # Session listing
+    # ======================================================================
+
+    def list_sessions(
+        self,
+        *,
+        status: str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve historical sessions with optional status and query filtering.
+        """
+        return list(self.trace_store.list_sessions(status=status, q=q, limit=limit))
 
     # ======================================================================
     # Recovery

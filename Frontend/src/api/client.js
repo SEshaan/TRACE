@@ -251,6 +251,14 @@ export async function selectAgent(agentType, options = {}) {
   return { agent: data?.active_agent ?? null, raw: data };
 }
 
+/* ------------------------------------------------------------------ schema */
+
+export async function getSchema(options = {}) {
+  const ep = EP.schema;
+  const data = await request(ep.path, { method: ep.method, ...options });
+  return data;
+}
+
 /* ------------------------------------------------------------- capability */
 
 /**
@@ -260,17 +268,18 @@ export async function selectAgent(agentType, options = {}) {
 let capabilities = null;
 
 export async function probeCapabilities(options = {}) {
-  const [agent, sessions] = await Promise.all([
+  const [agent, sessions, schemaAvailable] = await Promise.all([
     getAgentStatus(options).then(() => true).catch(() => false),
     listSessions({ limit: 1 }, options).then((r) => !r.unsupported).catch(() => false),
+    getSchema(options).then(() => true).catch(() => false),
   ]);
 
   capabilities = {
     online: agent,
     listSessions: sessions,
-    // Probed lazily by callers the first time they need them:
-    step: capabilities?.step ?? false,
-    checkpointStateId: capabilities?.checkpointStateId ?? false,
+    schema: schemaAvailable,
+    step: capabilities?.step ?? true,
+    checkpointStateId: capabilities?.checkpointStateId ?? true,
   };
   return capabilities;
 }

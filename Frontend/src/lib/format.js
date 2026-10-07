@@ -37,7 +37,8 @@ export function confidenceRatio(value) {
   if (missing(value)) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
-  const ratio = n <= 1 ? n : n / 100;
+  const rawRatio = n <= 1 ? n : n / 100;
+  const ratio = Math.round(rawRatio * 1e6) / 1e6;
   return Math.min(1, Math.max(0, ratio));
 }
 

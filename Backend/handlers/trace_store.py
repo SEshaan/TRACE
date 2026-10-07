@@ -34,7 +34,9 @@ class InMemoryTraceStore(TraceStore):
         model_version: str | None = None,
     ) -> QuerySession:
         import uuid
+        from datetime import datetime, timezone
 
+        now = datetime.now(timezone.utc).isoformat()
         session_id = str(uuid.uuid4())
         session = QuerySession(
             id=session_id,
@@ -43,6 +45,8 @@ class InMemoryTraceStore(TraceStore):
             current_state_id=root_state.id,
             status=QueryStatus.NEW,
             model_version=model_version,
+            created_at=now,
+            updated_at=now,
         )
         self._sessions[session_id] = session
         self._session_states[session_id] = []
@@ -65,6 +69,9 @@ class InMemoryTraceStore(TraceStore):
         current_state_id: str,
         status: QueryStatus,
     ) -> None:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
         session = self.get_session(session_id)
         self._sessions[session_id] = QuerySession(
             id=session.id,
@@ -73,7 +80,39 @@ class InMemoryTraceStore(TraceStore):
             current_state_id=current_state_id,
             status=status,
             model_version=session.model_version,
+            created_at=session.created_at or now,
+            updated_at=now,
         )
+
+    def list_sessions(
+        self,
+        *,
+        status: str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for s in reversed(list(self._sessions.values())):
+            status_val = s.status.value if hasattr(s.status, "value") else str(s.status)
+            if status and status_val != status:
+                continue
+            if q and q.lower() not in s.request.lower():
+                continue
+            state_count = len(self._session_states.get(s.id, []))
+            has_failure = len(self._session_failures.get(s.id, [])) > 0
+            results.append({
+                "id": s.id,
+                "request": s.request,
+                "status": status_val,
+                "model_version": s.model_version,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+                "state_count": state_count,
+                "has_failure": has_failure,
+            })
+            if len(results) >= limit:
+                break
+        return results
 
     def save_state(
         self,

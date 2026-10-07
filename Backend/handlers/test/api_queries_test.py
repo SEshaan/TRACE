@@ -115,6 +115,7 @@ def test_api_full_query_workflow(client: TestClient):
     finish_data = finish_resp.json()
     assert finish_data["row_count"] > 0
     assert len(finish_data["rows"]) == finish_data["row_count"]
+    assert finish_data["total_actions"] is not None
 
     # 7. Get Trace
     trace_resp = client.get(f"/queries/{session_id}/trace")
@@ -122,3 +123,73 @@ def test_api_full_query_workflow(client: TestClient):
     trace_data = trace_resp.json()
     assert len(trace_data["checkpoints"]) == 1
     assert len(trace_data["states"]) >= 3
+
+
+def test_api_step_endpoint(client: TestClient):
+    create_resp = client.post("/queries", json={"request": "Students in Computer Science"})
+    assert create_resp.status_code == 201
+    session_id = create_resp.json()["id"]
+
+    # Call /step (decide + apply in one call)
+    step_resp = client.post(f"/queries/{session_id}/step")
+    assert step_resp.status_code == 200
+    step_data = step_resp.json()
+    assert step_data["success"] is True
+    assert "decision" in step_data
+    assert step_data["decision"]["action_type"] in ["SELECT_TABLE", "SELECT_COLUMN", "FILTER", "JOIN", "LIMIT", "FINISH"]
+    assert step_data["state"]["action_count"] >= 1
+
+
+def test_api_list_sessions(client: TestClient):
+    # Create two queries
+    c1 = client.post("/queries", json={"request": "List high GPA students"})
+    c2 = client.post("/queries", json={"request": "Find engineering courses"})
+    assert c1.status_code == 201
+    assert c2.status_code == 201
+
+    # List all
+    list_resp = client.get("/queries")
+    assert list_resp.status_code == 200
+    sessions = list_resp.json()
+    assert isinstance(sessions, list)
+    assert len(sessions) >= 2
+
+    # Verify query search filtering
+    filtered_resp = client.get("/queries?q=engineering")
+    assert filtered_resp.status_code == 200
+    filtered = filtered_resp.json()
+    assert len(filtered) >= 1
+    assert "engineering" in filtered[0]["request"].lower()
+
+
+def test_api_schema(client: TestClient):
+    schema_resp = client.get("/queries/schema")
+    assert schema_resp.status_code == 200
+    data = schema_resp.json()
+    assert "tables" in data
+    table_names = [t["name"] for t in data["tables"]]
+    assert "students" in table_names
+    students_tbl = next(t for t in data["tables"] if t["name"] == "students")
+    col_names = [c["name"] for c in students_tbl["columns"]]
+    assert "id" in col_names
+    assert "name" in col_names
+    assert "gpa" in col_names
+
+
+def test_api_checkpoint_with_state_id(client: TestClient):
+    create_resp = client.post("/queries", json={"request": "Students table"})
+    session_id = create_resp.json()["id"]
+
+    act_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={"action_type": "SELECT_TABLE", "parameters": {"table": "students"}},
+    )
+    state_id = act_resp.json()["state"]["id"]
+
+    cp_resp = client.post(
+        f"/queries/{session_id}/checkpoints",
+        json={"label": "explicit_state_cp", "state_id": state_id},
+    )
+    assert cp_resp.status_code == 201
+    assert cp_resp.json()["state_id"] == state_id
+

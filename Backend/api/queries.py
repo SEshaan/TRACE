@@ -128,6 +128,7 @@ class ApplyActionRequest(BaseModel):
 
 class CreateCheckpointRequest(BaseModel):
     label: str | None = None
+    state_id: str | None = None
 
 
 class RecoverQueryRequest(BaseModel):
@@ -148,6 +149,8 @@ class QuerySessionResponse(BaseModel):
     current_state_id: str
     status: QueryStatus
     model_version: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
     @classmethod
     def from_session(
@@ -161,7 +164,20 @@ class QuerySessionResponse(BaseModel):
             current_state_id=session.current_state_id,
             status=session.status,
             model_version=session.model_version,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
         )
+
+
+class SessionSummaryResponse(BaseModel):
+    id: str
+    request: str
+    status: QueryStatus
+    model_version: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    state_count: int = 0
+    has_failure: bool = False
 
 
 class QueryStateResponse(BaseModel):
@@ -172,6 +188,7 @@ class QueryStateResponse(BaseModel):
     sql: str | None
     preview: dict[str, Any] | None = None
     action: dict[str, Any] | None = None
+    decision: dict[str, Any] | None = None
 
     @classmethod
     def from_state(
@@ -192,8 +209,15 @@ class QueryStateResponse(BaseModel):
             }
 
         action_data = None
+        decision_data = None
         if state.actions:
-            action_data = serialize_action(state.actions[-1])
+            last_action = state.actions[-1]
+            action_data = serialize_action(last_action)
+            conf = getattr(last_action, "confidence", None)
+            if conf is not None:
+                decision_data = {
+                    "confidence": conf,
+                }
 
         return cls(
             id=state.id,
@@ -203,6 +227,7 @@ class QueryStateResponse(BaseModel):
             sql=state.sql,
             preview=preview,
             action=action_data,
+            decision=decision_data,
         )
 
 
@@ -256,6 +281,27 @@ class NextActionResponse(BaseModel):
     parameters: dict[str, Any]
 
 
+class StepResponse(ActionResponse):
+    decision: NextActionResponse | None = None
+
+
+class ColumnInfo(BaseModel):
+    name: str
+    data_type: str
+    nullable: bool = True
+    primary_key: bool = False
+
+
+class TableInfo(BaseModel):
+    name: str
+    columns: list[ColumnInfo]
+    row_count_estimate: int | None = None
+
+
+class SchemaResponse(BaseModel):
+    tables: list[TableInfo]
+
+
 class QueryResultResponse(BaseModel):
     state: QueryStateResponse
     sql: str
@@ -263,11 +309,14 @@ class QueryResultResponse(BaseModel):
     rows: list[dict[str, Any]]
     row_count: int
     execution_time_ms: float
+    total_actions: int | None = None
+    model_version: str | None = None
 
     @classmethod
     def from_result(
         cls,
         result: QueryResult,
+        session: QuerySession | None = None,
     ) -> QueryResultResponse:
         return cls(
             state=QueryStateResponse.from_state(
@@ -278,6 +327,8 @@ class QueryResultResponse(BaseModel):
             rows=list(result.rows),
             row_count=result.row_count,
             execution_time_ms=result.execution_time_ms,
+            total_actions=len(result.state.actions),
+            model_version=session.model_version if session else None,
         )
 
 
@@ -467,6 +518,102 @@ def create_query(
 
 
 @router.get(
+    "",
+    response_model=list[SessionSummaryResponse],
+)
+def list_queries(
+    status: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    handler: QueryHandler = Depends(get_query_handler),
+) -> list[SessionSummaryResponse]:
+    """
+    List historical query sessions with filtering and search.
+    """
+
+    sessions = handler.list_sessions(
+        status=status,
+        q=q,
+        limit=limit,
+    )
+
+    return [
+        SessionSummaryResponse(
+            id=s["id"],
+            request=s["request"],
+            status=s["status"],
+            model_version=s.get("model_version"),
+            created_at=str(s["created_at"]) if s.get("created_at") is not None else None,
+            updated_at=str(s["updated_at"]) if s.get("updated_at") is not None else None,
+            state_count=s.get("state_count", 0),
+            has_failure=bool(s.get("has_failure", False)),
+        )
+        for s in sessions
+    ]
+
+
+@router.get(
+    "/schema",
+    response_model=SchemaResponse,
+)
+def get_schema(
+    handler: QueryHandler = Depends(get_query_handler),
+) -> SchemaResponse:
+    """
+    Get available database schema including tables and columns.
+    """
+
+    db_schema = handler.schema_provider.get_schema()
+    tables: list[TableInfo] = []
+
+    if db_schema and hasattr(db_schema, "tables"):
+        for t in db_schema.tables:
+            cols: list[ColumnInfo] = []
+            for c in getattr(t, "columns", []):
+                cols.append(
+                    ColumnInfo(
+                        name=c.name,
+                        data_type=c.data_type,
+                        nullable=getattr(c, "nullable", True),
+                        primary_key=getattr(c, "primary_key", False),
+                    )
+                )
+            tables.append(
+                TableInfo(
+                    name=t.name,
+                    columns=cols,
+                    row_count_estimate=getattr(t, "row_count_estimate", None),
+                )
+            )
+
+    return SchemaResponse(tables=tables)
+
+
+@router.get("/agent/status")
+def get_agent_status(controller=Depends(get_agent_controller)) -> dict[str, Any]:
+    """Get currently active decision model adapter info."""
+    return {
+        "active_agent": controller.active_agent_type,
+        "registered": list(controller._registry.keys()),
+        "model_name": controller.model_name,
+        "base_url": controller.base_url,
+    }
+
+
+@router.post("/agent/select")
+def select_agent(body: dict[str, str], controller=Depends(get_agent_controller)) -> dict[str, str]:
+    """Switch active adapter between 'ornith', 'rule', or future 'laya'."""
+    agent_type = body.get("agent_type")
+    if not agent_type:
+        raise HTTPException(status_code=400, detail="agent_type required")
+    try:
+        controller.switch_to(agent_type)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "active_agent": controller.active_agent_type}
+
+
+@router.get(
     "/{session_id}",
     response_model=QueryStateResponse,
 )
@@ -491,6 +638,49 @@ def get_query(
 
     return QueryStateResponse.from_state(
         state,
+    )
+
+
+@router.post(
+    "/{session_id}/step",
+    response_model=StepResponse,
+)
+def step_query(
+    session_id: str,
+    handler: QueryHandler = Depends(get_query_handler),
+) -> StepResponse:
+    """
+    Decide the next action and apply it in a single step.
+    """
+
+    try:
+        result, decided_action = handler.step(
+            session_id,
+        )
+
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Query session not found.",
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    action_resp = ActionResponse.from_result(result)
+    decision = NextActionResponse(
+        action_type=decided_action.action_type,
+        parameters=serialize_action(decided_action),
+    )
+
+    return StepResponse(
+        success=action_resp.success,
+        state=action_resp.state,
+        failure=action_resp.failure,
+        decision=decision,
     )
 
 
@@ -570,21 +760,23 @@ def create_checkpoint(
     handler: QueryHandler = Depends(get_query_handler),
 ) -> CheckpointResponse:
     """
-    Create a checkpoint at the current query state.
+    Create a checkpoint at the current or specified query state.
     """
 
     label = body.label if body is not None else None
+    state_id = body.state_id if body is not None else None
 
     try:
         checkpoint = handler.checkpoint(
             session_id,
+            state_id=state_id,
             label=label,
         )
 
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Query session not found.",
+            detail="Query session or state not found.",
         ) from exc
 
     return CheckpointResponse.from_checkpoint(
@@ -642,6 +834,7 @@ def finish_query(
     """
 
     try:
+        session = handler.trace_store.get_session(session_id)
         result = handler.finish(
             session_id,
         )
@@ -660,6 +853,7 @@ def finish_query(
 
     return QueryResultResponse.from_result(
         result,
+        session=session,
     )
 
 
@@ -691,27 +885,3 @@ def get_trace(
     return QueryTraceResponse.from_trace(
         trace,
     )
-
-
-@router.get("/agent/status")
-def get_agent_status(controller=Depends(get_agent_controller)) -> dict[str, Any]:
-    """Get currently active decision model adapter info."""
-    return {
-        "active_agent": controller.active_agent_type,
-        "registered": list(controller._registry.keys()),
-        "model_name": controller.model_name,
-        "base_url": controller.base_url,
-    }
-
-
-@router.post("/agent/select")
-def select_agent(body: dict[str, str], controller=Depends(get_agent_controller)) -> dict[str, str]:
-    """Switch active adapter between 'ornith', 'rule', or future 'laya'."""
-    agent_type = body.get("agent_type")
-    if not agent_type:
-        raise HTTPException(status_code=400, detail="agent_type required")
-    try:
-        controller.switch_to(agent_type)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"status": "ok", "active_agent": controller.active_agent_type}
