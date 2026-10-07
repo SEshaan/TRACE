@@ -386,12 +386,15 @@ def build_action(
     p = request.parameters
 
     from handlers.actions import (
+        AbortQueryAction,
         FilterAction,
         FinishAction,
         GroupByAction,
+        InsufficientInfoAction,
         JoinAction,
         LimitAction,
         OrderByAction,
+        SchemaMissingAction,
         SelectColumnAction,
         SelectTableAction,
     )
@@ -449,6 +452,28 @@ def build_action(
 
     elif atype == "FINISH":
         return FinishAction()
+
+    elif atype == "INSUFFICIENT_INFO":
+        if "reason" not in p:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="reason parameter required")
+        return InsufficientInfoAction(
+            reason=p["reason"],
+            clarification=p.get("clarification"),
+            missing_fields=p.get("missing_fields"),
+        )
+
+    elif atype == "SCHEMA_MISSING":
+        if "reason" not in p:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="reason parameter required")
+        return SchemaMissingAction(
+            reason=p["reason"],
+            table=p.get("table"),
+            column=p.get("column"),
+            expected_relationship=p.get("expected_relationship"),
+        )
+
+    elif atype == "ABORT_QUERY":
+        return AbortQueryAction()
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,

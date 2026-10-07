@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 from handlers.actions import (
+    AbortQueryAction,
     FilterAction,
     GroupByAction,
+    InsufficientInfoAction,
     JoinAction,
     LimitAction,
     OrderByAction,
+    SchemaMissingAction,
     SelectColumnAction,
     SelectTableAction,
 )
@@ -53,6 +56,12 @@ class DeterministicValidator(Validator):
             self._validate_limit(action, state, environment)
         elif action_type == "FINISH":
             self._validate_finish(action, state, environment)
+        elif action_type == "INSUFFICIENT_INFO":
+            self._validate_insufficient_info(action, state, environment)
+        elif action_type == "SCHEMA_MISSING":
+            self._validate_schema_missing(action, state, environment)
+        elif action_type == "ABORT_QUERY":
+            self._validate_abort_query(action, state, environment)
         else:
             raise ValueError(f"Unknown action type: {action_type}")
 
@@ -178,3 +187,17 @@ class DeterministicValidator(Validator):
         active = self._get_active_tables(state)
         if not active:
             raise ValueError("Cannot finish query without selecting a table.")
+
+    def _validate_insufficient_info(self, action: Any, state: QueryState, schema: Any) -> None:
+        reason = getattr(action, "reason", None)
+        if not reason or not str(reason).strip():
+            raise ValueError("INSUFFICIENT_INFO requires a non-empty 'reason'.")
+
+    def _validate_schema_missing(self, action: Any, state: QueryState, schema: Any) -> None:
+        reason = getattr(action, "reason", None)
+        if not reason or not str(reason).strip():
+            raise ValueError("SCHEMA_MISSING requires a non-empty 'reason'.")
+
+    def _validate_abort_query(self, action: Any, state: QueryState, schema: Any) -> None:
+        # ABORT_QUERY is allowed at any state, including the empty root state.
+        return

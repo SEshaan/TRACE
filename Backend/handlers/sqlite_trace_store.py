@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from handlers.actions import (
+    AbortQueryAction,
     FilterAction,
     FinishAction,
     GroupByAction,
+    InsufficientInfoAction,
     JoinAction,
     LimitAction,
     OrderByAction,
+    SchemaMissingAction,
     SelectColumnAction,
     SelectTableAction,
 )
@@ -473,4 +476,21 @@ class SQLiteTraceStore(TraceStore):
             return LimitAction(limit=int(params["limit"]), confidence=conf)
         elif atype == "FINISH":
             return FinishAction(confidence=conf)
+        elif atype == "INSUFFICIENT_INFO":
+            return InsufficientInfoAction(
+                reason=params.get("reason", ""),
+                clarification=params.get("clarification", ""),
+                missing_fields=params.get("missing_fields"),
+                confidence=conf,
+            )
+        elif atype == "SCHEMA_MISSING":
+            return SchemaMissingAction(
+                reason=params.get("reason", ""),
+                table=params.get("table"),
+                column=params.get("column"),
+                expected_relationship=params.get("expected_relationship"),
+                confidence=conf,
+            )
+        elif atype == "ABORT_QUERY":
+            return AbortQueryAction(confidence=conf)
         raise ValueError(f"Unknown action type: {action_type}")

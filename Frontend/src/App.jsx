@@ -28,11 +28,10 @@ import {
 } from 'lucide-react'
 
 function App() {
-  const [inputQuery, setInputQuery] = useState(
-    'Students with GPA above 8 enrolled in more than 3 courses',
-  )
 
-  const [activeBottomTab, setActiveBottomTab] = useState('sql')
+  const [inputQuery, setInputQuery] = useState('Students with GPA above 8 enrolled in more than 3 courses')
+  const [activeBottomTab, setActiveBottomTab] = useState('sql') // 'sql' | 'results' | 'summary'
+
   const [checkpointLabel, setCheckpointLabel] = useState('checkpoint')
   const [recoveryInput, setRecoveryInput] = useState('gpa > 8.5')
   const [recoveryOpen, setRecoveryOpen] = useState(false)
@@ -72,10 +71,8 @@ function App() {
   const isOnline = session.isOnline
   const isCheckingBackend = session.isChecking
 
-  const errorMessage =
-    session.error?.message ??
-    run.error?.message ??
-    null
+  const errorMessage = session.error?.message ?? run.error?.message ?? null
+
 
   const handleRun = () => {
     if (!isRunning && inputQuery.trim()) {
@@ -84,22 +81,15 @@ function App() {
       })
     }
   }
-
   const handleStep = () => {
-    if (run.isPaused) {
-      run.stepOnce()
-    } else {
-      run.start(inputQuery, {
-        mode: 'step',
-      })
-    }
+
+    if (run.isPaused) run.stepOnce()
+    else run.start(inputQuery, { mode: 'step' })
   }
 
   const handleCreateCheckpoint = (stateId) => {
-    session.setCheckpoint(
-      stateId,
-      checkpointLabel.trim() || 'checkpoint',
-    )
+    session.setCheckpoint(stateId, checkpointLabel.trim() || 'checkpoint')
+
   }
 
   const handleRecover = (node) => {
@@ -113,26 +103,16 @@ function App() {
     }
 
     setActionError(null)
-
-    session
-      .recover({
-        checkpointId: node.checkpoint_id,
-        action,
-      })
-      .then((result) => {
-        if (result) {
-          setRecoveryOpen(false)
-        }
-      })
-      .catch(() => {
-        // Normalized error is exposed by the store.
-      })
+    session.recover({ checkpointId: node.checkpoint_id, action }).then((result) => {
+      if (result) setRecoveryOpen(false)
+    }).catch(() => {
+      // The store exposes the normalized error banner.
+    })
   }
 
   const handleNewQuery = () => {
     setInputQuery('')
     setRecoveryOpen(false)
-
     run.abort()
     session.reset()
   }

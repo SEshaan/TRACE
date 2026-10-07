@@ -14,11 +14,13 @@ if str(_TEST_DIR.parent) not in sys.path:
 
 from Backend.db_adapters.sqlite_adapter import SQLiteAdapter
 from Backend.handlers import (
+    AbortQueryAction,
     DeterministicValidator,
     DefaultQueryStateEngine,
     FilterAction,
     FinishAction,
     GroupByAction,
+    InsufficientInfoAction,
     InMemoryTraceStore,
     JoinAction,
     LimitAction,
@@ -27,6 +29,7 @@ from Backend.handlers import (
     QueryResult,
     QueryStatus,
     RuleBasedDecisionModel,
+    SchemaMissingAction,
     SelectColumnAction,
     SelectTableAction,
     SQLiteCompiler,
@@ -191,3 +194,50 @@ def test_join_query(handler: QueryHandler):
     assert res_finish.row_count > 0
     assert "student" in res_finish.columns
     assert "department" in res_finish.columns
+
+
+def test_apply_insufficient_info_short_circuits(handler: QueryHandler):
+    session = handler.create("Graceful fail query")
+
+    res = handler.apply_action(
+        session.id,
+        InsufficientInfoAction(reason="GPA threshold not specified", clarification="What range?"),
+    )
+    assert res.success is True
+    # Fail actions record a decision node, no SQL compiled.
+    assert res.state.sql is None
+    assert res.state.preview is None
+    assert res.state.status == QueryStatus.FAILED
+    assert res.state.actions[-1].action_type == "INSUFFICIENT_INFO"
+
+
+def test_apply_schema_missing_short_circuits(handler: QueryHandler):
+    session = handler.create("Graceful fail query")
+
+    res = handler.apply_action(
+        session.id,
+        SchemaMissingAction(reason="No enrollments table", table="enrollments"),
+    )
+    assert res.success is True
+    assert res.state.sql is None
+    assert res.state.status == QueryStatus.FAILED
+    assert res.state.actions[-1].action_type == "SCHEMA_MISSING"
+
+
+def test_apply_abort_query_on_empty_state(handler: QueryHandler):
+    session = handler.create("Graceful fail query")
+
+    # ABORT_QUERY is allowed even on the empty root state.
+    res = handler.apply_action(session.id, AbortQueryAction())
+    assert res.success is True
+    assert res.state.status == QueryStatus.FAILED
+    assert res.state.actions[-1].action_type == "ABORT_QUERY"
+
+
+def test_validator_rejects_empty_reason(handler: QueryHandler):
+    session = handler.create("Graceful fail query")
+
+    res = handler.apply_action(session.id, InsufficientInfoAction(reason=""))
+    assert res.success is False
+    assert res.failure is not None
+    assert "reason" in res.failure.message

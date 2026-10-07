@@ -154,13 +154,16 @@ function normalizeThrown(err, { path, method, callerSignal, timeout }) {
   }
 
   // fetch() rejects with TypeError on DNS failure, port closed, CORS, offline.
-  return new ApiError(`Backend unreachable at ${API_BASE}. Start it with "python Backend/main.py".`, {
-    code: API_ERROR.BACKEND_OFFLINE,
-    status: 0,
-    endpoint: path,
-    method,
-    cause: err,
-  });
+  return new ApiError(
+    `Backend unreachable at ${API_BASE}. Start it with ".\\.venv\\Scripts\\python.exe -m uvicorn main:app --app-dir Backend --port 8000".`,
+    {
+      code: API_ERROR.BACKEND_OFFLINE,
+      status: 0,
+      endpoint: path,
+      method,
+      cause: err,
+    },
+  );
 }
 
 function sleep(ms) {
