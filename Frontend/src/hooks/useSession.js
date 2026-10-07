@@ -15,6 +15,7 @@ import {
   refreshAgent,
   refreshTrace,
   selectNode,
+  setNodePosition,
   setCheckpoint,
   recover as recoverAction,
   forceFailure,
@@ -22,6 +23,7 @@ import {
   previewState,
   openSession,
   clearError,
+  reset,
 } from '../store/queryStore';
 
 export function useSession({ autoLoad = true } = {}) {
@@ -56,10 +58,12 @@ export function useSession({ autoLoad = true } = {}) {
     selectedNodeId: selection.id,
     selectedNode,
     selectNode,
+    setNodePosition,
 
     /* status */
     traceStatus: trace.status,
     fetchedAt: trace.fetchedAt,
+    busy,
     isBusy: Boolean(busy.checkpoint || busy.recover || busy.applyAction || busy.openSession),
     isOnline: capabilities.online !== false,
     capabilities,
@@ -77,5 +81,6 @@ export function useSession({ autoLoad = true } = {}) {
     forceFailure,
     applyAction: applyRawAction,
     previewState,
+    reset,
   };
 }

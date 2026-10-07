@@ -7,7 +7,7 @@
  * ---------------------------------------------------------------------------
  */
 
-import { useQueryStore, startRun, stepOnce, pauseRun, resumeRun, abortRun, resetRun } from '../store/queryStore';
+import { useQueryStore, startRun, stepOnce, pauseRun, resumeRun, abortRun, resetRun, finishNow } from '../store/queryStore';
 
 export function useQueryRun({ mode = 'auto', maxSteps, stepDelayMs } = {}) {
   const { run, session, result, error, capabilities } = useQueryStore();
@@ -50,5 +50,6 @@ export function useQueryRun({ mode = 'auto', maxSteps, stepDelayMs } = {}) {
     resume: resumeRun,
     abort: abortRun,
     reset: resetRun,
+    finish: finishNow,
   };
 }

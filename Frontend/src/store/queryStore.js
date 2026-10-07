@@ -274,6 +274,18 @@ export function selectNode(id) {
   patch('selection', { id: id ? String(id) : null });
 }
 
+/**
+ * Dragging a node is a purely visual, local override. The graph structure
+ * itself always comes from the backend trace.
+ */
+export function setNodePosition(id, position) {
+  if (!id || !position) return;
+  patch('trace', (prev) => {
+    const nodes = prev.graph.nodes.map((node) => (node.id === id ? { ...node, position } : node));
+    return { ...prev, graph: { ...prev.graph, nodes } };
+  });
+}
+
 /* --------------------------------------------------------------- run ------ */
 
 /**
@@ -530,6 +542,31 @@ export async function recover({ checkpointId, stateId, action } = {}) {
     throw err;
   } finally {
     busy('recover', false);
+  }
+}
+
+/**
+ * Explicit FINISH. The run loop calls this itself when the agent decides to
+ * finish; the button exists because the spec asks for a manual finish.
+ */
+export async function finishNow() {
+  const sessionId = state.session.id;
+  if (!sessionId) {
+    setError(new ApiError('No active session to finish.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+  busy('finishing', true);
+  try {
+    const result = await api.finish(sessionId);
+    patch('result', () => result);
+    await refreshTrace(sessionId);
+    patch('run', (prev) => ({ ...prev, phase: 'finished', controller: null }));
+    return result;
+  } catch (err) {
+    setError(err);
+    return null;
+  } finally {
+    busy('finishing', false);
   }
 }
 

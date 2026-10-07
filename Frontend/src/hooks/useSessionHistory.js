@@ -16,8 +16,8 @@ export function useSessionHistory({ autoLoad = true, status = null, q = '' } = {
   const { sessions, capabilities } = useQueryStore();
 
   useEffect(() => {
-    if (autoLoad) loadSessions();
-  }, [autoLoad]);
+    if (autoLoad) loadSessions({ status, q });
+  }, [autoLoad, status, q]);
 
   const visible = useMemo(() => {
     const term = (sessions.filter.q ?? '').trim().toLowerCase();

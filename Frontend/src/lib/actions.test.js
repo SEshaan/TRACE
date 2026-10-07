@@ -3,6 +3,7 @@ import {
   buildActionPayload,
   describeAction,
   normalizeActionInput,
+  parseFilterText,
   preflightValidate,
   actionSignature,
 } from './actions';
@@ -162,5 +163,68 @@ describe('describeAction / actionSignature', () => {
     const fields = actionSignature('FILTER');
     expect(fields.map((f) => f.name)).toEqual(['column', 'operator', 'value', 'table']);
     expect(fields.find((f) => f.name === 'operator').options.length).toBeGreaterThan(5);
+  });
+});
+
+describe('parseFilterText — free text to a structured FILTER', () => {
+  it('parses the recovery shorthand the UI collects', () => {
+    expect(parseFilterText('gpa > 8.5')).toEqual({
+      action_type: 'FILTER',
+      parameters: { column: 'gpa', operator: '>', value: 8.5 },
+    });
+  });
+
+  it('keeps integers as numbers, not strings', () => {
+    expect(parseFilterText('credits >= 4').parameters.value).toBe(4);
+    expect(typeof parseFilterText('credits >= 4').parameters.value).toBe('number');
+  });
+
+  it('keeps text values as strings', () => {
+    expect(parseFilterText("name = 'Alice'").parameters.value).toBe("'Alice'");
+  });
+
+  it('supports multi-word values (IN lists)', () => {
+    expect(parseFilterText('department_id IN 1 2 3').parameters.value).toBe('1 2 3');
+  });
+
+  it('omits the value for IS NULL / IS NOT NULL', () => {
+    expect(parseFilterText('gpa IS NULL')).toEqual({
+      action_type: 'FILTER',
+      parameters: { column: 'gpa', operator: 'IS NULL' },
+    });
+    expect(parseFilterText('gpa IS NOT NULL')).toEqual({
+      action_type: 'FILTER',
+      parameters: { column: 'gpa', operator: 'IS NOT NULL' },
+    });
+  });
+
+  it('defaults the operator to > when only a column and value are given', () => {
+    expect(parseFilterText('gpa 8.5').parameters.operator).toBe('>');
+  });
+
+  it('produces a payload the backend accepts', () => {
+    const payload = parseFilterText('gpa > 8.5');
+    expect(typeof payload.parameters).toBe('object');
+    expect(Array.isArray(payload.parameters)).toBe(false);
+  });
+
+  it('rejects an empty line with a fixable error', () => {
+    expect(() => parseFilterText('')).toThrow();
+    try {
+      parseFilterText('');
+    } catch (err) {
+      expect(err.code).toBe(API_ERROR.PREFLIGHT);
+      expect(err.fields).toEqual(['column']);
+    }
+  });
+
+  it('rejects a column with no value', () => {
+    try {
+      parseFilterText('gpa >');
+      expect.unreachable();
+    } catch (err) {
+      expect(err.code).toBe(API_ERROR.PREFLIGHT);
+      expect(err.fields).toEqual(['value']);
+    }
   });
 });

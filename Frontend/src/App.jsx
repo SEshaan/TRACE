@@ -1,39 +1,85 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { css } from '../styled-system/css'
 import '../styled-system/styles.css'
 import { Button } from '@/components/ui'
 import FlowTest from './flowTest'
-import { useQueryExecution } from './hooks/useQueryExecution'
-import { Bookmark, GitBranch, Play, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { useSession } from './hooks/useSession'
+import { useQueryRun } from './hooks/useQueryRun'
+import { useAgent } from './hooks/useAgent'
+import { useSessionHistory } from './hooks/useSessionHistory'
+import { toFlowEdges, toFlowNodes } from './lib/flowMapping'
+import { parseFilterText } from './lib/actions'
+import { setNodePosition } from './store/queryStore'
+import { Bookmark, GitBranch, Play, RefreshCw, AlertCircle, CheckCircle2, Footprints, StepForward, Square } from 'lucide-react'
 
 function App() {
   const [inputQuery, setInputQuery] = useState('Students with GPA above 8 enrolled in more than 3 courses')
   const [activeBottomTab, setActiveBottomTab] = useState('sql') // 'sql' | 'results' | 'summary'
 
-  const {
-    session,
-    isRunning,
-    status,
-    nodes,
-    edges,
-    selectedNode,
-    selectedNodeId,
-    setSelectedNodeId,
-    finalResult,
-    error,
-    activeAgent,
-    isBackendOnline,
-    executeQuery,
-    handleCreateCheckpoint,
-    handleRecover,
-    resetToMock,
-  } = useQueryExecution()
+  const session = useSession()
+  const run = useQueryRun()
+  const agent = useAgent()
+  const history = useSessionHistory()
+
+  const flowNodes = useMemo(
+    () => toFlowNodes(session.nodes, { edges: session.edges, selectedId: session.selectedNodeId }),
+    [session.nodes, session.edges, session.selectedNodeId],
+  )
+  const flowEdges = useMemo(() => toFlowEdges(session.edges), [session.edges])
+
+  const selectedNode = flowNodes.find((n) => n.id === session.selectedNodeId)?.data ?? null
+  const result = run.result
+  const isRunning = run.isRunning
+  const isOnline = session.isOnline
+  const errorMessage = session.error?.message ?? run.error?.message ?? null
 
   const handleRun = () => {
     if (!isRunning && inputQuery.trim()) {
-      executeQuery(inputQuery)
+      run.start(inputQuery, { mode: 'auto' })
     }
   }
+
+  const handleStep = () => {
+    if (run.isPaused) run.stepOnce()
+    else run.start(inputQuery, { mode: 'step' })
+  }
+
+  const handleNewQuery = () => {
+    setInputQuery('')
+    run.abort()
+    session.reset()
+  }
+
+  const handleCreateCheckpoint = (stateId) => {
+    const label = window.prompt('Checkpoint label', 'checkpoint')
+    if (label === null) return
+    session.setCheckpoint(stateId, label)
+  }
+
+  const handleRecover = (node) => {
+    const input = window.prompt('Correction as: column operator value', 'gpa > 8.5')
+    if (input === null) return
+
+    let action
+    try {
+      action = parseFilterText(input)
+    } catch (err) {
+      window.alert(err.message)
+      return
+    }
+
+    session.recover({ checkpointId: node.checkpoint_id, action })
+  }
+
+  const onNodesChange = useCallback((changes) => {
+    for (const change of changes) {
+      if (change.type === 'position' && change.position) setNodePosition(change.id, change.position)
+    }
+  }, [])
+
+  const onEdgesChange = useCallback(() => {}, [])
+
+  const status = run.isFinished ? 'completed' : run.isFailed || run.isAborted ? 'failed' : 'ready'
 
   return (
     <main
@@ -83,29 +129,29 @@ function App() {
           })}
           placeholder="Search queries..."
           aria-label="Search queries"
+          value={history.filter.q}
+          onChange={(e) => history.setFilter({ q: e.target.value })}
         />
 
         <div className={css({ display: 'flex', gap: '2' })}>
-          <Button size="sm" variant="outline" className={css({ flex: 1 })}>
-            All
-          </Button>
-
-          <Button size="sm" variant="outline" className={css({ flex: 1 })}>
-            Success
-          </Button>
-
-          <Button size="sm" variant="outline" className={css({ flex: 1 })}>
-            Failed
-          </Button>
+          {[
+            ['All', null],
+            ['Success', 'completed'],
+            ['Failed', 'failed'],
+          ].map(([label, value]) => (
+            <Button
+              key={label}
+              size="sm"
+              variant={history.filter.status === value ? 'solid' : 'outline'}
+              className={css({ flex: 1 })}
+              onClick={() => history.setFilter({ status: value })}
+            >
+              {label}
+            </Button>
+          ))}
         </div>
 
-        <Button
-          variant="outline"
-          onClick={() => {
-            setInputQuery('')
-            resetToMock()
-          }}
-        >
+        <Button variant="outline" onClick={handleNewQuery}>
           + New query
         </Button>
 
@@ -117,67 +163,93 @@ function App() {
           })}
         >
           <strong className={css({ color: 'gray.700', fontSize: 'xs', textTransform: 'uppercase' })}>
-            □ university.sqlite
+            Session history
           </strong>
 
-          <button
-            onClick={() => {
-              setInputQuery('Students with GPA above 8 enrolled in more than 3 courses')
-              resetToMock()
-            }}
-            className={css({
-              textAlign: 'left',
-              pl: '3',
-              py: '1',
-              borderRadius: 'md',
-              fontSize: 'xs',
-              color: 'green.700',
-              bg: 'green.50',
-              cursor: 'pointer',
-              border: 'none',
-              _hover: { bg: 'green.100' },
-            })}
-          >
-            ● GPA above 8 (active mock)
-          </button>
+          {history.loading && (
+            <p className={css({ fontSize: 'xs', color: 'gray.500' })}>Loading sessions…</p>
+          )}
 
-          <button
-            onClick={() => {
-              const q = 'Select students where gpa > 8.5'
-              setInputQuery(q)
-              executeQuery(q)
-            }}
-            className={css({
-              textAlign: 'left',
-              pl: '3',
-              py: '1',
-              borderRadius: 'md',
-              fontSize: 'xs',
-              color: 'blue.700',
-              bg: 'blue.50',
-              cursor: 'pointer',
-              border: 'none',
-              _hover: { bg: 'blue.100' },
-            })}
-          >
-            ● Live API: GPA &gt; 8.5
-          </button>
+          {history.unsupported && (
+            <p className={css({ fontSize: 'xs', color: 'amber.700' })}>
+              History unavailable — this backend build has no GET /queries endpoint.
+            </p>
+          )}
 
-          <strong className={css({ color: 'gray.700', fontSize: 'xs', textTransform: 'uppercase', mt: '2' })}>
-            □ library.sqlite
-          </strong>
-          <strong className={css({ color: 'gray.700', fontSize: 'xs', textTransform: 'uppercase' })}>
-            □ hospital.sqlite
-          </strong>
+          {!history.loading && !history.unsupported && history.sessions.length === 0 && (
+            <p className={css({ fontSize: 'xs', color: 'gray.500' })}>No stored sessions yet.</p>
+          )}
+
+          <div className={css({ display: 'grid', gap: '1' })}>
+            {history.sessions.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setInputQuery(item.request ?? '')
+                  session.openSession(item.id)
+                }}
+                className={css({
+                  textAlign: 'left',
+                  px: '2',
+                  py: '1.5',
+                  borderRadius: 'md',
+                  fontSize: 'xs',
+                  color: 'blue.700',
+                  bg: item.id === session.session.id ? 'blue.100' : 'blue.50',
+                  cursor: 'pointer',
+                  border: 'none',
+                  _hover: { bg: 'blue.100' },
+                })}
+              >
+                <span className={css({ display: 'block', fontWeight: 'semibold' })}>
+                  {item.request || '(untitled)'}
+                </span>
+                <span className={css({ color: 'gray.500', fontSize: '10px' })}>
+                  {item.status} · {item.stateCount ?? 0} states
+                  {item.hasFailure ? ' · has failure' : ''}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <Button size="sm" variant="outline" onClick={history.refresh} disabled={history.loading}>
+            <RefreshCw size={12} className={css({ mr: '1.5' })} />
+            Refresh history
+          </Button>
         </div>
 
         <div className={css({ mt: 'auto', display: 'flex', flexDirection: 'column', gap: '2' })}>
           <div className={css({ fontSize: 'xs', color: 'gray.500', display: 'flex', justifyContent: 'space-between' })}>
             <span>Active Agent:</span>
             <span className={css({ fontWeight: 'bold', color: 'blue.600', textTransform: 'uppercase' })}>
-              {activeAgent}
+              {agent.agent ?? '—'}
             </span>
           </div>
+
+          {agent.registered.length > 0 && (
+            <select
+              aria-label="Select decision agent"
+              value={agent.agent ?? ''}
+              onChange={(e) => agent.selectAgent(e.target.value)}
+              disabled={agent.loading}
+              className={css({
+                fontSize: 'xs',
+                borderWidth: '1px',
+                borderColor: 'gray.300',
+                borderRadius: 'md',
+                px: '2',
+                py: '1',
+                bg: 'white',
+              })}
+            >
+              {agent.registered.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          )}
+
           <Button variant="outline" size="sm">
             + Add database
           </Button>
@@ -213,7 +285,7 @@ function App() {
             <div>
               <div className={css({ display: 'flex', alignItems: 'center', gap: '2' })}>
                 <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
-                  Database: <strong>university.sqlite</strong> {session?.id && `· Session: ${session.id.slice(0, 8)}`}
+                  Database: <strong>university.sqlite</strong> {session.session.id && `· Session: ${session.session.id.slice(0, 8)}`}
                 </p>
                 <span
                   className={css({
@@ -222,13 +294,13 @@ function App() {
                     py: '0.5',
                     borderRadius: 'full',
                     fontWeight: '600',
-                    bg: isBackendOnline ? 'green.50' : 'amber.50',
-                    color: isBackendOnline ? 'green.700' : 'amber.800',
+                    bg: isOnline ? 'green.50' : 'amber.50',
+                    color: isOnline ? 'green.700' : 'amber.800',
                     border: '1px solid',
-                    borderColor: isBackendOnline ? 'green.200' : 'amber.300',
+                    borderColor: isOnline ? 'green.200' : 'amber.300',
                   })}
                 >
-                  {isBackendOnline ? '● Backend Online (port 8000)' : '○ Backend Offline (demo fallback)'}
+                  {isOnline ? '● Backend Online (port 8000)' : '○ Backend Offline'}
                 </span>
               </div>
 
@@ -262,7 +334,27 @@ function App() {
                   })}
                 >
                   <RefreshCw size={12} className={css({ animation: 'spin 1s linear infinite' })} />
-                  Executing Actions...
+                  Step {run.stepIndex}
+                </span>
+              ) : run.isPaused ? (
+                <span
+                  className={css({
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '1.5',
+                    px: '2.5',
+                    py: '1',
+                    borderRadius: 'full',
+                    bg: 'amber.50',
+                    color: 'amber.800',
+                    fontSize: 'xs',
+                    fontWeight: 'semibold',
+                    border: '1px solid',
+                    borderColor: 'amber.200',
+                  })}
+                >
+                  <StepForward size={12} />
+                  Paused · step {run.stepIndex}
                 </span>
               ) : status === 'completed' ? (
                 <span
@@ -351,9 +443,29 @@ function App() {
                 </>
               )}
             </Button>
+
+            <Button variant="outline" onClick={handleStep} disabled={isRunning}>
+              <StepForward size={14} className={css({ mr: '1' })} />
+              Step
+            </Button>
+
+            <Button variant="outline" onClick={run.abort} disabled={!isRunning}>
+              <Square size={14} className={css({ mr: '1' })} />
+              Stop
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => run.resume()}
+              disabled={!run.isPaused}
+              title="Continue the paused run in auto mode"
+            >
+              <Footprints size={14} className={css({ mr: '1' })} />
+              Resume
+            </Button>
           </div>
 
-          {error && (
+          {errorMessage && (
             <div
               className={css({
                 p: '2',
@@ -369,7 +481,10 @@ function App() {
               })}
             >
               <AlertCircle size={14} />
-              <span>{error}</span>
+              <span>{errorMessage}</span>
+              <Button size="xs" variant="ghost" onClick={session.clearError}>
+                Dismiss
+              </Button>
             </div>
           )}
         </header>
@@ -383,10 +498,11 @@ function App() {
           })}
         >
           <FlowTest
-            nodes={nodes}
-            edges={edges}
-            onSelectNode={(nodeData) => setSelectedNodeId(nodeData.id)}
-            selectedNodeId={selectedNodeId}
+            nodes={flowNodes}
+            edges={flowEdges}
+            onSelectNode={(nodeData) => session.selectNode(nodeData.id)}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
           />
         </div>
       </section>
@@ -422,7 +538,7 @@ function App() {
                   color: 'gray.900',
                 })}
               >
-                {selectedNode.action}
+                {selectedNode.action || 'Root state (no action)'}
               </h2>
             </div>
 
@@ -443,7 +559,7 @@ function App() {
                   wordBreak: 'break-all',
                 })}
               >
-                {typeof selectedNode.params === 'object'
+                {typeof selectedNode.params === 'object' && selectedNode.params !== null
                   ? JSON.stringify(selectedNode.params, null, 2)
                   : String(selectedNode.params || 'None')}
               </p>
@@ -565,7 +681,7 @@ function App() {
                 size="sm"
                 variant="outline"
                 onClick={() => handleCreateCheckpoint(selectedNode.id)}
-                disabled={Boolean(selectedNode.checkpoint_id)}
+                disabled={Boolean(selectedNode.checkpoint_id) || !session.session.id}
               >
                 <Bookmark size={13} className={css({ mr: '1.5' })} />
                 {selectedNode.checkpoint_id ? 'Checkpoint Pinned' : 'Set Checkpoint'}
@@ -574,17 +690,77 @@ function App() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => {
-                  const newParam = prompt('Enter correction parameter (e.g. GPA > 8.5):', 'GPA > 8.5')
-                  if (newParam) {
-                    handleRecover(selectedNode.checkpoint_id || selectedNode.id, 'ADD_FILTER', newParam)
-                  }
-                }}
+                onClick={() => handleRecover(selectedNode)}
+                disabled={!session.session.id || session.busy?.recover === true}
               >
                 <GitBranch size={13} className={css({ mr: '1.5' })} />
                 Branch / Recompute
               </Button>
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => session.applyAction({ action_type: 'LIMIT', parameters: { limit: 5 } })}
+                disabled={!session.session.id}
+                title="Apply an explicit action to the current state"
+              >
+                Apply LIMIT 5
+              </Button>
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={session.forceFailure}
+                disabled={!session.session.id}
+                title="Apply FILTER on column CGPA, which the backend always rejects"
+              >
+                Trigger demo failure
+              </Button>
+
+              <Button size="sm" variant="outline" onClick={run.finish} disabled={!session.session.id}>
+                Finish now
+              </Button>
             </div>
+
+            {session.previewState(selectedNode.id) && (
+              <div>
+                <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                  Intermediate preview ({session.previewState(selectedNode.id).rowCount ?? 0} rows)
+                </p>
+
+                <div className={css({ overflowX: 'auto', mt: '1' })}>
+                  <table
+                    className={css({
+                      width: '100%',
+                      fontSize: '10px',
+                      borderCollapse: 'collapse',
+                      textAlign: 'left',
+                    })}
+                  >
+                    <thead>
+                      <tr className={css({ bg: 'gray.50', borderBottom: '1px solid', borderColor: 'gray.200' })}>
+                        {(session.previewState(selectedNode.id).columns ?? []).map((col) => (
+                          <th key={col} className={css({ p: '1.5', fontWeight: 'bold', color: 'gray.700' })}>
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(session.previewState(selectedNode.id).rows ?? []).slice(0, 5).map((row, idx) => (
+                        <tr key={idx} className={css({ borderBottom: '1px solid', borderColor: 'gray.100' })}>
+                          {(session.previewState(selectedNode.id).columns ?? []).map((col) => (
+                            <td key={col} className={css({ p: '1.5', color: 'gray.800' })}>
+                              {String(row[col] ?? '')}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -654,7 +830,7 @@ function App() {
               borderRight: 'none',
             })}
           >
-            Results {finalResult?.row_count != null ? `(${finalResult.row_count})` : ''}
+            Results {result?.rowCount != null ? `(${result.rowCount})` : ''}
           </button>
 
           <button
@@ -692,13 +868,13 @@ function App() {
                 borderColor: 'gray.200',
               })}
             >
-              {finalResult?.sql || selectedNode?.sql || 'No SQL generated yet.'}
+              {result?.sql || selectedNode?.sql || 'No SQL generated yet.'}
             </pre>
           )}
 
           {activeBottomTab === 'results' && (
             <div>
-              {finalResult?.rows && finalResult.rows.length > 0 ? (
+              {result?.rows && result.rows.length > 0 ? (
                 <table
                   className={css({
                     width: '100%',
@@ -709,7 +885,7 @@ function App() {
                 >
                   <thead>
                     <tr className={css({ bg: 'gray.50', borderBottom: '1px solid', borderColor: 'gray.200' })}>
-                      {finalResult.columns.map((col) => (
+                      {result.columns.map((col) => (
                         <th key={col} className={css({ p: '2', fontWeight: 'bold', color: 'gray.700' })}>
                           {col}
                         </th>
@@ -717,9 +893,9 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {finalResult.rows.map((row, idx) => (
+                    {result.rows.map((row, idx) => (
                       <tr key={idx} className={css({ borderBottom: '1px solid', borderColor: 'gray.100' })}>
-                        {finalResult.columns.map((col) => (
+                        {result.columns.map((col) => (
                           <td key={col} className={css({ p: '2', color: 'gray.800' })}>
                             {String(row[col] ?? '')}
                           </td>
@@ -740,27 +916,29 @@ function App() {
             <div className={css({ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4', fontSize: 'xs' })}>
               <div className={css({ p: '3', borderRadius: 'md', bg: 'gray.50', border: '1px solid', borderColor: 'gray.200' })}>
                 <p className={css({ color: 'gray.500' })}>Total Actions</p>
-                <p className={css({ fontSize: 'base', fontWeight: 'bold', mt: '1' })}>{nodes.length}</p>
+                <p className={css({ fontSize: 'base', fontWeight: 'bold', mt: '1' })}>{session.stats.actionCount}</p>
               </div>
 
               <div className={css({ p: '3', borderRadius: 'md', bg: 'gray.50', border: '1px solid', borderColor: 'gray.200' })}>
                 <p className={css({ color: 'gray.500' })}>Rows Produced</p>
                 <p className={css({ fontSize: 'base', fontWeight: 'bold', mt: '1' })}>
-                  {finalResult?.row_count ?? 0} rows
+                  {result?.rowCount ?? session.stats.rowCount ?? 0} rows
                 </p>
               </div>
 
               <div className={css({ p: '3', borderRadius: 'md', bg: 'gray.50', border: '1px solid', borderColor: 'gray.200' })}>
                 <p className={css({ color: 'gray.500' })}>Total Latency</p>
                 <p className={css({ fontSize: 'base', fontWeight: 'bold', mt: '1' })}>
-                  {finalResult?.execution_time_ms != null ? `${finalResult.execution_time_ms} ms` : '—'}
+                  {(result?.executionTimeMs ?? session.stats.totalLatencyMs) != null
+                    ? `${result?.executionTimeMs ?? session.stats.totalLatencyMs} ms`
+                    : '—'}
                 </p>
               </div>
 
               <div className={css({ p: '3', borderRadius: 'md', bg: 'gray.50', border: '1px solid', borderColor: 'gray.200' })}>
                 <p className={css({ color: 'gray.500' })}>Model Decision Adapter</p>
                 <p className={css({ fontSize: 'base', fontWeight: 'bold', mt: '1', textTransform: 'uppercase', color: 'blue.700' })}>
-                  {activeAgent}
+                  {agent.agent ?? '—'}
                 </p>
               </div>
             </div>

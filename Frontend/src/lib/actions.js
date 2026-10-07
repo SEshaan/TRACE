@@ -300,3 +300,42 @@ export function actionSignature(actionType) {
             : undefined,
   }));
 }
+
+/**
+ * Free-text filter shorthand -> a structured FILTER action.
+ *
+ * The recovery UI still collects the correction as one text line ("gpa > 8.5");
+ * the backend only accepts { column, operator, value }. Numbers stay numbers so
+ * SQLite compares numerically, and IS NULL / IS NOT NULL omit the value.
+ *
+ * @throws ApiError PREFLIGHT when the line has no column.
+ */
+export function parseFilterText(text) {
+  const parts = String(text ?? '').trim().split(/\s+/).filter(Boolean);
+  const [column, ...rest] = parts;
+  if (!column) {
+    throw new ApiError('A filter needs a column, e.g. "gpa > 8.5".', {
+      code: API_ERROR.PREFLIGHT,
+      fields: ['column'],
+    });
+  }
+
+  const nullOp = /^IS\s+(NOT\s+)?NULL$/i.test(rest.join(' ')) ? rest.join(' ').toUpperCase() : null;
+  // "gpa 8.5" has no operator token; default to '>' and treat the rest as the value.
+  const hasOperator = OPERATORS.includes(String(rest[0] ?? '').toUpperCase());
+  const operator = nullOp ?? (hasOperator ? rest[0].toUpperCase() : '>');
+  const rawValue = nullOp ? '' : (hasOperator ? rest.slice(1).join(' ') : rest.join(' '));
+
+  const parameters = { column, operator };
+  if (!nullOp) {
+    if (!rawValue) {
+      throw new ApiError(`A filter on '${column}' needs a value.`, {
+        code: API_ERROR.PREFLIGHT,
+        fields: ['value'],
+      });
+    }
+    parameters.value = /^-?\d+(\.\d+)?$/.test(rawValue) ? Number(rawValue) : rawValue;
+  }
+
+  return buildActionPayload('FILTER', parameters);
+}
