@@ -1,0 +1,6 @@
+{
+  "active_agent": "rule",
+  "registered": ["rule", "ornith"],
+  "model_name": "rule-based",
+  "base_url": null
+}

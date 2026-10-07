@@ -1,0 +1,53 @@
+{
+  "session": {
+    "id": "sess-0000-4000-8000-000000000000",
+    "request": "Select students where gpa > 8.5",
+    "root_state_id": "3b58d100-0000-4000-8000-000000000001",
+    "current_state_id": "bafbad16-0000-4000-8000-000000000003",
+    "status": "failed",
+    "model_version": null
+  },
+  "states": [
+    {
+      "id": "3b58d100-0000-4000-8000-000000000001",
+      "parent_id": null,
+      "status": "new",
+      "action_count": 0,
+      "sql": null,
+      "preview": null,
+      "action": null
+    },
+    {
+      "id": "389b658f-0000-4000-8000-000000000002",
+      "parent_id": "3b58d100-0000-4000-8000-000000000001",
+      "status": "active",
+      "action_count": 1,
+      "sql": "SELECT * FROM \"students\"",
+      "preview": null,
+      "action": { "table": "students", "action_type": "SELECT_TABLE", "confidence": 1.0 }
+    },
+    {
+      "id": "bafbad16-0000-4000-8000-000000000003",
+      "parent_id": "389b658f-0000-4000-8000-000000000002",
+      "status": "active",
+      "action_count": 2,
+      "sql": "SELECT * FROM \"students\"",
+      "preview": { "columns": ["id"], "rows": [{ "id": 1 }], "row_count": 8, "truncated": false, "execution_time_ms": 0.812 },
+      "action": { "column": "*", "action_type": "SELECT_COLUMN", "confidence": 1.0 }
+    },
+    {
+      "id": "bafbad16-0000-4000-8000-000000000003",
+      "parent_id": "389b658f-0000-4000-8000-000000000002",
+      "status": "active",
+      "action_count": 2,
+      "sql": "SELECT * FROM \"students\"",
+      "preview": null,
+      "action": { "column": "*", "action_type": "SELECT_COLUMN", "confidence": 1.0 },
+      "failure": { "action_type": "FILTER", "code": "VALIDATION_FAILED", "message": "Column 'CGPA' not found in active tables: ['students']." }
+    }
+  ],
+  "checkpoints": [],
+  "failures": [
+    { "action_type": "FILTER", "code": "VALIDATION_FAILED", "message": "Column 'CGPA' not found in active tables: ['students']." }
+  ]
+}

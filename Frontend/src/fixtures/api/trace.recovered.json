@@ -1,0 +1,115 @@
+{
+  "session": {
+    "id": "sess-0000-4000-8000-000000000000",
+    "request": "Select students where gpa > 8.5",
+    "root_state_id": "3b58d100-0000-4000-8000-000000000001",
+    "current_state_id": "a1d6a4af-0000-4000-8000-000000000005",
+    "status": "active",
+    "model_version": null
+  },
+  "states": [
+    {
+      "id": "3b58d100-0000-4000-8000-000000000001",
+      "parent_id": null,
+      "status": "new",
+      "action_count": 0,
+      "sql": null,
+      "preview": null,
+      "action": null
+    },
+    {
+      "id": "389b658f-0000-4000-8000-000000000002",
+      "parent_id": "3b58d100-0000-4000-8000-000000000001",
+      "status": "active",
+      "action_count": 1,
+      "sql": "SELECT * FROM \"students\"",
+      "preview": {
+        "columns": ["id", "name", "gpa", "department_id"],
+        "rows": [
+          { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },
+          { "id": 2, "name": "Bob", "gpa": 8.4, "department_id": 1 },
+          { "id": 3, "name": "Charlie", "gpa": 7.8, "department_id": 2 }
+        ],
+        "row_count": 8,
+        "truncated": false,
+        "execution_time_ms": 0.604
+      },
+      "action": { "table": "students", "action_type": "SELECT_TABLE", "confidence": 1.0 }
+    },
+    {
+      "id": "bafbad16-0000-4000-8000-000000000003",
+      "parent_id": "389b658f-0000-4000-8000-000000000002",
+      "status": "active",
+      "action_count": 2,
+      "sql": "SELECT * FROM \"students\"",
+      "preview": {
+        "columns": ["id", "name", "gpa", "department_id"],
+        "rows": [
+          { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },
+          { "id": 2, "name": "Bob", "gpa": 8.4, "department_id": 1 },
+          { "id": 3, "name": "Charlie", "gpa": 7.8, "department_id": 2 }
+        ],
+        "row_count": 8,
+        "truncated": false,
+        "execution_time_ms": 0.812
+      },
+      "action": { "column": "*", "table": null, "alias": null, "action_type": "SELECT_COLUMN", "confidence": 1.0 }
+    },
+    {
+      "id": "72908499-0000-4000-8000-000000000004",
+      "parent_id": "bafbad16-0000-4000-8000-000000000003",
+      "status": "active",
+      "action_count": 2,
+      "sql": "SELECT * FROM \"students\"",
+      "preview": {
+        "columns": ["id", "name", "gpa", "department_id"],
+        "rows": [
+          { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },
+          { "id": 2, "name": "Bob", "gpa": 8.4, "department_id": 1 },
+          { "id": 3, "name": "Charlie", "gpa": 7.8, "department_id": 2 }
+        ],
+        "row_count": 8,
+        "truncated": false,
+        "execution_time_ms": 0.744
+      },
+      "action": { "column": "*", "table": null, "alias": null, "action_type": "SELECT_COLUMN", "confidence": 1.0 }
+    },
+    {
+      "id": "a1d6a4af-0000-4000-8000-000000000005",
+      "parent_id": "72908499-0000-4000-8000-000000000004",
+      "status": "active",
+      "action_count": 3,
+      "sql": "SELECT * FROM \"students\"\nWHERE \"gpa\" > ?",
+      "preview": {
+        "columns": ["id", "name", "gpa", "department_id"],
+        "rows": [
+          { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },
+          { "id": 4, "name": "Diana", "gpa": 9.5, "department_id": 1 },
+          { "id": 5, "name": "Ethan", "gpa": 8.9, "department_id": 3 },
+          { "id": 7, "name": "George", "gpa": 9.0, "department_id": 1 }
+        ],
+        "row_count": 4,
+        "truncated": false,
+        "execution_time_ms": 1.117
+      },
+      "action": {
+        "column": "gpa",
+        "operator": ">",
+        "value": 8.5,
+        "table": null,
+        "action_type": "FILTER",
+        "confidence": 1.0
+      }
+    }
+  ],
+  "checkpoints": [
+    { "id": "e7590711-0000-4000-8000-0000000000c4", "state_id": "bafbad16-0000-4000-8000-000000000003", "label": "base" }
+  ],
+  "failures": [
+    {
+      "action_type": "FILTER",
+      "code": "VALIDATION_FAILED",
+      "message": "Column 'CGPA' not found in active tables: ['students']."
+    }
+  ]
+}

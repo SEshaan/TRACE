@@ -1,0 +1,8 @@
+{
+  "id": "3b58d100-0000-4000-8000-000000000001",
+  "request": "Select students where gpa > 8.5",
+  "root_state_id": "3b58d100-0000-4000-8000-000000000001",
+  "current_state_id": "3b58d100-0000-4000-8000-000000000001",
+  "status": "new",
+  "model_version": null
+}

@@ -1,0 +1,11 @@
+{
+  "detail": [
+    {
+      "type": "dict_type",
+      "loc": ["body", "parameters"],
+      "msg": "Input should be a valid dictionary",
+      "input": "GPA > 8.5",
+      "ctx": { "input": "GPA > 8.5" }
+    }
+  ]
+}

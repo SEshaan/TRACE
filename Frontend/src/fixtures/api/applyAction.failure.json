@@ -1,0 +1,32 @@
+{
+  "success": false,
+  "state": {
+    "id": "bafbad16-0000-4000-8000-000000000003",
+    "parent_id": "389b658f-0000-4000-8000-000000000002",
+    "status": "active",
+    "action_count": 2,
+    "sql": "SELECT * FROM \"students\"",
+    "preview": {
+      "columns": ["id", "name", "gpa", "department_id"],
+      "rows": [
+        { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },
+        { "id": 2, "name": "Bob", "gpa": 8.4, "department_id": 1 }
+      ],
+      "row_count": 8,
+      "truncated": false,
+      "execution_time_ms": 0.812
+    },
+    "action": {
+      "column": "*",
+      "table": null,
+      "alias": null,
+      "action_type": "SELECT_COLUMN",
+      "confidence": 1.0
+    }
+  },
+  "failure": {
+    "action_type": "FILTER",
+    "code": "VALIDATION_FAILED",
+    "message": "Column 'CGPA' not found in active tables: ['students']."
+  }
+}

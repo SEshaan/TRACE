@@ -1,0 +1,21 @@
+{
+  "state": {
+    "id": "a1d6a4af-0000-4000-8000-000000000005",
+    "parent_id": "72908499-0000-4000-8000-000000000004",
+    "status": "completed",
+    "action_count": 3,
+    "sql": "SELECT * FROM \"students\"\nWHERE \"gpa\" > ?",
+    "preview": null,
+    "action": { "column": "gpa", "operator": ">", "value": 8.5, "action_type": "FILTER", "confidence": 1.0 }
+  },
+  "sql": "SELECT * FROM \"students\"\nWHERE \"gpa\" > ?",
+  "columns": ["id", "name", "gpa", "department_id"],
+  "rows": [
+    { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },
+    { "id": 4, "name": "Diana", "gpa": 9.5, "department_id": 1 },
+    { "id": 5, "name": "Ethan", "gpa": 8.9, "department_id": 3 },
+    { "id": 7, "name": "George", "gpa": 9.0, "department_id": 1 }
+  ],
+  "row_count": 4,
+  "execution_time_ms": 3.29
+}
