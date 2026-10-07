@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from handlers.actions import (
+    AbortQueryAction,
     ActionUnion,
     FilterAction,
     FinishAction,
     GroupByAction,
+    InsufficientInfoAction,
     JoinAction,
     LimitAction,
     OrderByAction,
+    SchemaMissingAction,
     SelectColumnAction,
     SelectTableAction,
 )
@@ -74,6 +77,9 @@ __all__ = [
     "OrderByAction",
     "LimitAction",
     "FinishAction",
+    "InsufficientInfoAction",
+    "SchemaMissingAction",
+    "AbortQueryAction",
     "ActionUnion",
     # Module implementations
     "DeterministicValidator",

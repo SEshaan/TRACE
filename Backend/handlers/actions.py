@@ -110,6 +110,58 @@ class FinishAction:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class InsufficientInfoAction:
+    """Graceful fail: the prompt lacks a fact needed to build the query.
+
+    A soft branch-stopper. The agent stops here and asks for clarification;
+    the branch can still be recovered by branching from an earlier checkpoint.
+    """
+
+    reason: str = ""
+    clarification: str = ""
+    missing_fields: list[str] | None = None
+    action_type: str = "INSUFFICIENT_INFO"
+    confidence: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SchemaMissingAction:
+    """Graceful fail: the DB lacks a table/column/relationship required by the request.
+
+    A soft branch-stopper. The agent reports which object is missing and does not
+    invent it; the branch can still be recovered from an earlier checkpoint.
+    """
+
+    reason: str = ""
+    table: str | None = None
+    column: str | None = None
+    expected_relationship: str | None = None
+    action_type: str = "SCHEMA_MISSING"
+    confidence: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AbortQueryAction:
+    """Graceful fail: the agent cannot satisfy the request at all.
+
+    A hard terminal failure. Only used when backtracking has reached the root /
+    first state and there is nothing left to try.
+    """
+
+    action_type: str = "ABORT_QUERY"
+    confidence: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 ActionUnion = (
     SelectTableAction
     | SelectColumnAction
@@ -119,4 +171,7 @@ ActionUnion = (
     | OrderByAction
     | LimitAction
     | FinishAction
+    | InsufficientInfoAction
+    | SchemaMissingAction
+    | AbortQueryAction
 )

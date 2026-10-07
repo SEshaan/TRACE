@@ -193,3 +193,75 @@ def test_api_checkpoint_with_state_id(client: TestClient):
     assert cp_resp.status_code == 201
     assert cp_resp.json()["state_id"] == state_id
 
+
+def test_api_insufficient_info_fail_action(client: TestClient):
+    create_resp = client.post("/queries", json={"request": "Students table"})
+    session_id = create_resp.json()["id"]
+
+    resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "INSUFFICIENT_INFO",
+            "parameters": {
+                "reason": "GPA threshold not specified",
+                "clarification": "What GPA range?",
+                "missing_fields": ["gpa_threshold"],
+            },
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    # Fail actions record a decision node, not SQL.
+    assert data["state"]["sql"] is None
+    assert data["state"]["status"] == "failed"
+    assert data["state"]["action"]["action_type"] == "INSUFFICIENT_INFO"
+
+
+def test_api_schema_missing_fail_action(client: TestClient):
+    create_resp = client.post("/queries", json={"request": "Students table"})
+    session_id = create_resp.json()["id"]
+
+    resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "SCHEMA_MISSING",
+            "parameters": {
+                "reason": "No enrollments table in schema",
+                "table": "enrollments",
+            },
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["state"]["sql"] is None
+    assert data["state"]["action"]["action_type"] == "SCHEMA_MISSING"
+
+
+def test_api_abort_query_fail_action(client: TestClient):
+    # ABORT_QUERY must be allowed even on an empty root state.
+    create_resp = client.post("/queries", json={"request": "Impossible query"})
+    session_id = create_resp.json()["id"]
+
+    resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={"action_type": "ABORT_QUERY", "parameters": {}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["state"]["sql"] is None
+    assert data["state"]["action"]["action_type"] == "ABORT_QUERY"
+
+
+def test_api_insufficient_info_requires_reason(client: TestClient):
+    create_resp = client.post("/queries", json={"request": "Students table"})
+    session_id = create_resp.json()["id"]
+
+    resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={"action_type": "INSUFFICIENT_INFO", "parameters": {}},
+    )
+    assert resp.status_code == 422
+

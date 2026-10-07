@@ -717,6 +717,43 @@ class QueryHandler:
             )
 
         # ------------------------------------------------------------------
+        # Graceful fail actions: record a decision node and stop.
+        # Fail actions (INSUFFICIENT_INFO / SCHEMA_MISSING / ABORT_QUERY) do
+        # not build SQL, so we short-circuit before compile/execute. The new
+        # state is persisted with sql=None and preview=None so the frontend
+        # renders it as a decision node rather than an empty query.
+        # ------------------------------------------------------------------
+
+        if getattr(action, "action_type", None) in (
+            "INSUFFICIENT_INFO",
+            "SCHEMA_MISSING",
+            "ABORT_QUERY",
+        ):
+            persisted_state = QueryState(
+                id=next_state.id,
+                parent_id=next_state.parent_id,
+                actions=next_state.actions,
+                status=QueryStatus.FAILED,
+                sql=None,
+                preview=None,
+            )
+
+            self.trace_store.save_state(
+                session_id,
+                persisted_state,
+            )
+
+            self.trace_store.update_session(
+                session_id,
+                current_state_id=persisted_state.id,
+                status=QueryStatus.FAILED,
+            )
+
+            return ActionResult(
+                state=persisted_state,
+            )
+
+        # ------------------------------------------------------------------
         # SQL compilation
         # ------------------------------------------------------------------
 
