@@ -5,42 +5,65 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { mockNodes } from "./mock";
 import TraceNode from "./TraceNode";
 
 const nodeTypes = {
   trace: TraceNode,
 };
 
-const positions = {
-  "1": { x: 300, y: 0 },
-  "2": { x: 300, y: 120 },
-  "3": { x: 300, y: 240 },
-  "4": { x: 80, y: 360 },
-  "5": { x: 520, y: 360 },
-  "6": { x: 520, y: 480 },
-  "7": { x: 520, y: 600 },
-};
+function getTreePositions(nodes) {
+  const childrenByParent = new Map();
+  const positions = new Map();
+
+  nodes.forEach((node) => {
+    const children = childrenByParent.get(node.parent_id) ?? [];
+    children.push(node);
+    childrenByParent.set(node.parent_id, children);
+  });
+
+  let nextLeafX = 0;
+
+  function placeNode(node, depth) {
+    const children = childrenByParent.get(node.id) ?? [];
+
+    if (children.length === 0) {
+      positions.set(node.id, { x: nextLeafX * 240, y: depth * 140 });
+      nextLeafX += 1;
+      return positions.get(node.id).x;
+    }
+
+    const childXPositions = children.map((child) => placeNode(child, depth + 1));
+    const x = childXPositions.reduce((total, childX) => total + childX, 0) / childXPositions.length;
+    positions.set(node.id, { x, y: depth * 140 });
+    return x;
+  }
+
+  const roots = childrenByParent.get(null) ?? [];
+  roots.forEach((root) => placeNode(root, 0));
+
+  return Object.fromEntries(positions);
+}
 
 export default function FlowTest({
+  nodes: incomingNodes = [],
   onSelectNode,
   selectedNodeId,
 }) {
-  const nodes = mockNodes.map((node) => ({
+  const positions = getTreePositions(incomingNodes);
+
+  const nodes = incomingNodes.map((node) => ({
     id: node.id,
     type: "trace",
-    position: positions[node.id],
-
+    position: positions[node.id] ?? { x: 0, y: 0 },
     selected: node.id === selectedNodeId,
-
     data: {
       ...node,
-      isActiveBranch: node.is_active_branch,
       checkpointId: node.checkpoint_id,
+      isActiveBranch: true,
     },
   }));
 
-  const edges = mockNodes
+  const edges = incomingNodes
     .filter((node) => node.parent_id)
     .map((node) => ({
       id: `e-${node.parent_id}-${node.id}`,

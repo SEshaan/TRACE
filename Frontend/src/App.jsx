@@ -1,11 +1,40 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { css } from '../styled-system/css'
 import '../styled-system/styles.css'
 import { Button } from '@/components/ui'
 import FlowTest from './flowTest'
+import { activeSession, queryCatalog } from './mockData'
 
 function App() {
-  const [selectedNode, setSelectedNode] = useState(null)
+  const [dbs] = useState(queryCatalog)
+  const [openDbId, setOpenDbId] = useState(activeSession.databaseId)
+  const [openQueryId, setOpenQueryId] = useState(activeSession.queryId)
+  const [selectedNodeId, setSelectedNodeId] = useState(null)
+  const [drawerTab, setDrawerTab] = useState('final-sql')
+
+  const activeDb = useMemo(
+    () => dbs.find((db) => db.id === openDbId) ?? dbs[0],
+    [dbs, openDbId],
+  )
+
+  const activeQuery = useMemo(
+    () =>
+      activeDb.queries.find((query) => query.id === openQueryId) ?? activeDb.queries[0],
+    [activeDb, openQueryId],
+  )
+
+  useEffect(() => {
+    if (!activeQuery.nodes.some((node) => node.id === selectedNodeId)) {
+      setSelectedNodeId(activeQuery.nodes[0]?.id ?? null)
+    }
+  }, [activeQuery, selectedNodeId])
+
+  const selectedNode = useMemo(
+    () => activeQuery.nodes.find((node) => node.id === selectedNodeId) ?? activeQuery.nodes[0],
+    [activeQuery, selectedNodeId],
+  )
+
+  const finalSql = activeQuery.nodes[activeQuery.nodes.length - 1]?.sql ?? ''
 
   return (
     <main
@@ -80,18 +109,30 @@ function App() {
             fontSize: 'sm',
           })}
         >
-          <strong>□ university.sqlite</strong>
-
-          <span className={css({ pl: '4', color: 'green.700' })}>
-            ● GPA above 8...
-          </span>
-
-          <span className={css({ pl: '4', color: 'red.700' })}>
-            ● Faculty per department
-          </span>
-
-          <strong>□ library.sqlite</strong>
-          <strong>□ hospital.sqlite</strong>
+          {dbs.map((db) => (
+            <div key={db.id}>
+              <strong>□ {db.name}</strong>
+              {db.queries.map((query) => (
+                <span
+                  key={query.id}
+                  className={css({
+                    display: 'block',
+                    pl: '4',
+                    color: query.status === 'failed' ? 'red.700' : 'green.700',
+                    cursor: 'pointer',
+                    mt: '1',
+                  })}
+                  onClick={() => {
+                    setOpenDbId(db.id)
+                    setOpenQueryId(query.id)
+                    setSelectedNodeId(query.nodes[0]?.id ?? null)
+                  }}
+                >
+                  ● {query.title}
+                </span>
+              ))}
+            </div>
+          ))}
         </div>
 
         <Button variant="outline" mt="auto">
@@ -126,7 +167,7 @@ function App() {
           >
             <div>
               <p className={css({ fontSize: 'sm', color: 'gray.500' })}>
-                university.sqlite
+                {activeDb.name}
               </p>
 
               <h2
@@ -135,18 +176,18 @@ function App() {
                   fontWeight: 'semibold',
                 })}
               >
-                GPA above 8 and more than 3 courses
+                {activeQuery.title}
               </h2>
             </div>
 
             <span
               className={css({
-                color: 'green.700',
+                color: activeQuery.status === 'failed' ? 'red.700' : 'green.700',
                 fontSize: 'sm',
                 fontWeight: 'medium',
               })}
             >
-              Success
+              {activeQuery.status === 'failed' ? 'Failed' : 'Success'}
             </span>
           </div>
 
@@ -161,7 +202,7 @@ function App() {
                 borderColor: 'gray.300',
                 borderRadius: 'md',
               })}
-              defaultValue="Students with GPA above 8 enrolled in more than 3 courses"
+              defaultValue={activeQuery.request}
               aria-label="Query request"
             />
 
@@ -179,8 +220,9 @@ function App() {
           })}
         >
           <FlowTest
-            onSelectNode={setSelectedNode}
-            selectedNodeId={selectedNode?.id}
+            nodes={activeQuery.nodes}
+            onSelectNode={(node) => setSelectedNodeId(node.id)}
+            selectedNodeId={selectedNodeId}
           />
         </div>
       </section>
@@ -250,16 +292,6 @@ function App() {
 
               <p className={css({ fontSize: 'sm' })}>
                 {Math.round(selectedNode.confidence * 100)}%
-              </p>
-            </div>
-
-            <div>
-              <p className={css({ fontSize: 'xs', color: 'gray.500' })}>
-                Branch
-              </p>
-
-              <p className={css({ fontSize: 'sm' })}>
-                {selectedNode.branch_id}
               </p>
             </div>
 
@@ -361,29 +393,62 @@ function App() {
               borderBottomWidth: '2px',
               borderColor: 'blue.600',
             })}
+            onClick={() => setDrawerTab('final-sql')}
           >
             Final SQL
           </strong>
 
-          <span className={css({ color: 'gray.500' })}>
+          <span className={css({ color: 'gray.500' })} onClick={() => setDrawerTab('results')}>
             Results
           </span>
 
-          <span className={css({ color: 'gray.500' })}>
+          <span className={css({ color: 'gray.500' })} onClick={() => setDrawerTab('summary')}>
             Summary
           </span>
         </div>
 
-        <pre
-          className={css({
-            mt: '3',
-            whiteSpace: 'pre-wrap',
-            fontSize: 'sm',
-            color: 'gray.700',
-          })}
-        >
-          SELECT s.name FROM Student s JOIN Enrollment e ON s.id = e.student_id;
-        </pre>
+        {drawerTab === 'final-sql' && (
+          <pre
+            className={css({
+              mt: '3',
+              whiteSpace: 'pre-wrap',
+              fontSize: 'sm',
+              color: 'gray.700',
+            })}
+          >
+            {finalSql}
+          </pre>
+        )}
+
+        {drawerTab === 'results' && (
+          <pre
+            className={css({
+              mt: '3',
+              whiteSpace: 'pre-wrap',
+              fontSize: 'sm',
+              color: 'gray.700',
+            })}
+          >
+            {JSON.stringify(activeQuery.rows, null, 2)}
+          </pre>
+        )}
+
+        {drawerTab === 'summary' && (
+          <pre
+            className={css({
+              mt: '3',
+              whiteSpace: 'pre-wrap',
+              fontSize: 'sm',
+              color: 'gray.700',
+            })}
+          >
+            {JSON.stringify({
+              status: activeQuery.status,
+              updated: activeQuery.updated,
+              ms: activeQuery.ms,
+            }, null, 2)}
+          </pre>
+        )}
       </section>
     </main>
   )
