@@ -35,6 +35,7 @@ function App() {
   const result = run.result
   const isRunning = run.isRunning
   const isOnline = session.isOnline
+  const isCheckingBackend = session.isChecking
   const errorMessage = session.error?.message ?? run.error?.message ?? null
 
   const handleRun = () => {
@@ -317,7 +318,11 @@ function App() {
                     borderColor: isOnline ? 'green.200' : 'amber.300',
                   })}
                 >
-                  {isOnline ? '● Backend Online (port 8000)' : '○ Backend Offline'}
+                  {isCheckingBackend
+                    ? '◌ Checking backend…'
+                    : isOnline
+                      ? '● Backend Online (port 8000)'
+                      : '○ Backend Offline'}
                 </span>
               </div>
 

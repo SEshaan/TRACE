@@ -134,6 +134,7 @@ export async function probe() {
     if (capabilities.schema) {
       await loadSchema().catch(() => {});
     }
+    if (capabilities.online) clearError();
     return capabilities;
   } finally {
     busy('probe', false);
@@ -154,6 +155,7 @@ export async function refreshAgent() {
       loading: false,
     });
     patch('capabilities', (prev) => ({ ...prev, online: true }));
+    clearError();
     return status;
   } catch (err) {
     patch('agent', (prev) => ({ ...prev, loading: false }));
@@ -222,6 +224,10 @@ export function resetSession() {
 export async function openSession(sessionId) {
   if (!sessionId) return null;
   busy('openSession', true);
+  abortRun();
+  patch('run', initialState().run);
+  patch('result', null);
+  clearError();
   try {
     const trace = await api.getTrace(sessionId);
     applyTrace(trace);
@@ -232,10 +238,16 @@ export async function openSession(sessionId) {
       current: trace.session?.currentStateId ?? null,
       loading: false,
     });
-    const last = trace.states[trace.states.length - 1];
-    patch('selection', { id: last?.id ?? null });
+    const sessionStatus = trace.session?.status;
+    patch('run', {
+      ...initialState().run,
+      phase: sessionStatus === 'completed' ? 'finished' : sessionStatus === 'failed' ? 'failed' : 'idle',
+    });
+    const currentId = trace.session?.currentStateId ?? trace.states[trace.states.length - 1]?.id;
+    patch('selection', { id: currentId ?? null });
     return trace;
   } catch (err) {
+    patch('session', (prev) => ({ ...prev, loading: false }));
     setError(err);
     return null;
   } finally {
@@ -254,7 +266,7 @@ export async function refreshTrace(sessionId = state.session.id, { silent = true
     return trace;
   } catch (err) {
     patch('trace', (prev) => ({ ...prev, status: 'error' }));
-    if (!silent) setError(err);
+    setError(err);
     return null;
   }
 }
@@ -320,6 +332,7 @@ export async function startRun(prompt, { mode = 'auto', maxSteps = MAX_RUN_STEPS
     const session = await api.createSession(text, { signal: controller.signal });
     patch('session', (prev) => ({ ...prev, id: session.id, status: session.status, current: session.currentStateId, loading: false }));
     await refreshTrace(session.id, { silent: true });
+    await loadSessions();
   } catch (err) {
     finishRun(err);
     return null;
@@ -370,6 +383,7 @@ function finishRun(err) {
   if (err) {
     if (isOffline(err)) patch('capabilities', (prev) => ({ ...prev, online: false }));
     setError(err);
+    patch('session', (prev) => ({ ...prev, loading: false }));
     patch('run', (prev) => ({ ...prev, phase: err.isAborted ? 'aborted' : 'failed', controller: null }));
   }
 }

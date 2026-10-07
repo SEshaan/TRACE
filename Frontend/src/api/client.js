@@ -268,14 +268,14 @@ export async function getSchema(options = {}) {
 let capabilities = null;
 
 export async function probeCapabilities(options = {}) {
-  const [agent, sessions, schemaAvailable] = await Promise.all([
-    getAgentStatus(options).then(() => true).catch(() => false),
+  const [backendOnline, sessions, schemaAvailable] = await Promise.all([
+    health(options).then((result) => result.ok).catch(() => false),
     listSessions({ limit: 1 }, options).then((r) => !r.unsupported).catch(() => false),
     getSchema(options).then(() => true).catch(() => false),
   ]);
 
   capabilities = {
-    online: agent,
+    online: backendOnline,
     listSessions: sessions,
     schema: schemaAvailable,
     step: capabilities?.step ?? true,
