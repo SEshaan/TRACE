@@ -53,6 +53,7 @@ def get_query_handler() -> QueryHandler:
         return _global_handler
 
     import os
+
     from db_adapters.sqlite_adapter import SQLiteAdapter
     from handlers.compiler import SQLiteCompiler
     from handlers.db_adapter import SQLiteDatabaseAdapter
@@ -170,6 +171,7 @@ class QueryStateResponse(BaseModel):
     action_count: int
     sql: str | None
     preview: dict[str, Any] | None = None
+    action: dict[str, Any] | None = None
 
     @classmethod
     def from_state(
@@ -189,6 +191,10 @@ class QueryStateResponse(BaseModel):
                 ),
             }
 
+        action_data = None
+        if state.actions:
+            action_data = serialize_action(state.actions[-1])
+
         return cls(
             id=state.id,
             parent_id=state.parent_id,
@@ -196,6 +202,7 @@ class QueryStateResponse(BaseModel):
             action_count=len(state.actions),
             sql=state.sql,
             preview=preview,
+            action=action_data,
         )
 
 

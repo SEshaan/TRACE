@@ -43,6 +43,7 @@ import re
 from typing import Any
 
 from openai import OpenAI
+from openai.types.shared.reasoning_effort import ReasoningEffort
 
 
 class OrnithDecisionAgent:
@@ -347,6 +348,7 @@ The score must be between 0 and 2.
             ],
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            reasoning_effort="none"
         )
 
         msg = response.choices[0].message
