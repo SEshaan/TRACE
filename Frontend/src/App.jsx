@@ -15,6 +15,10 @@ import { Bookmark, GitBranch, Play, RefreshCw, AlertCircle, CheckCircle2, Footpr
 function App() {
   const [inputQuery, setInputQuery] = useState('Students with GPA above 8 enrolled in more than 3 courses')
   const [activeBottomTab, setActiveBottomTab] = useState('sql') // 'sql' | 'results' | 'summary'
+  const [checkpointLabel, setCheckpointLabel] = useState('checkpoint')
+  const [recoveryInput, setRecoveryInput] = useState('gpa > 8.5')
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [actionError, setActionError] = useState(null)
 
   const session = useSession()
   const run = useQueryRun()
@@ -38,37 +42,50 @@ function App() {
       run.start(inputQuery, { mode: 'auto' })
     }
   }
-
   const handleStep = () => {
     if (run.isPaused) run.stepOnce()
     else run.start(inputQuery, { mode: 'step' })
   }
 
+  const handleCreateCheckpoint = (stateId) => {
+    session.setCheckpoint(stateId, checkpointLabel.trim() || 'checkpoint')
+  }
+
+  const handleRecover = (node) => {
+    let action
+    try {
+      action = parseFilterText(recoveryInput)
+    } catch (err) {
+      setActionError(err.message)
+      return
+    }
+
+    setActionError(null)
+    session.recover({ checkpointId: node.checkpoint_id, action }).then((result) => {
+      if (result) setRecoveryOpen(false)
+    }).catch(() => {
+      // The store exposes the normalized error banner.
+    })
+  }
+
   const handleNewQuery = () => {
     setInputQuery('')
+    setRecoveryOpen(false)
     run.abort()
     session.reset()
   }
 
-  const handleCreateCheckpoint = (stateId) => {
-    const label = window.prompt('Checkpoint label', 'checkpoint')
-    if (label === null) return
-    session.setCheckpoint(stateId, label)
+  const handleRecoveryToggle = () => {
+    setRecoveryOpen((open) => !open)
   }
 
-  const handleRecover = (node) => {
-    const input = window.prompt('Correction as: column operator value', 'gpa > 8.5')
-    if (input === null) return
+  const handleRecoveryCancel = () => {
+    setRecoveryOpen(false)
+  }
 
-    let action
-    try {
-      action = parseFilterText(input)
-    } catch (err) {
-      window.alert(err.message)
-      return
-    }
-
-    session.recover({ checkpointId: node.checkpoint_id, action })
+  const handleRecoverySubmit = (event, node) => {
+    event.preventDefault()
+    handleRecover(node)
   }
 
   const onNodesChange = useCallback((changes) => {
@@ -687,15 +704,56 @@ function App() {
                 {selectedNode.checkpoint_id ? 'Checkpoint Pinned' : 'Set Checkpoint'}
               </Button>
 
+              {!selectedNode.checkpoint_id && (
+                <input
+                  value={checkpointLabel}
+                  onChange={(event) => setCheckpointLabel(event.target.value)}
+                  aria-label="Checkpoint label"
+                  placeholder="Checkpoint label"
+                  className={css({
+                    h: '8',
+                    px: '2',
+                    borderWidth: '1px',
+                    borderColor: 'gray.300',
+                    borderRadius: 'md',
+                    fontSize: 'xs',
+                  })}
+                />
+              )}
+
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => handleRecover(selectedNode)}
+                onClick={handleRecoveryToggle}
                 disabled={!session.session.id || session.busy?.recover === true}
               >
                 <GitBranch size={13} className={css({ mr: '1.5' })} />
-                Branch / Recompute
+                {recoveryOpen ? 'Close recovery' : 'Branch / Recompute'}
               </Button>
+
+              {recoveryOpen && (
+                <form onSubmit={(event) => handleRecoverySubmit(event, selectedNode)} className={css({ display: 'grid', gap: '2', p: '2', bg: 'blue.50', border: '1px solid', borderColor: 'blue.200', borderRadius: 'md' })}>
+                  <label className={css({ fontSize: 'xs', color: 'blue.800' })} htmlFor="recovery-filter">
+                    Correction filter
+                  </label>
+                  <input
+                    id="recovery-filter"
+                    value={recoveryInput}
+                    onChange={(event) => setRecoveryInput(event.target.value)}
+                    placeholder="gpa > 8.5"
+                    className={css({ h: '8', px: '2', borderWidth: '1px', borderColor: 'gray.300', borderRadius: 'md', fontSize: 'xs' })}
+                  />
+                  {actionError && <p className={css({ fontSize: 'xs', color: 'red.700' })}>{actionError}</p>}
+                  <div className={css({ display: 'flex', gap: '2' })}>
+                    <Button size="sm" type="submit" disabled={session.busy?.recover === true}>
+                      Apply correction
+                    </Button>
+                    <Button size="sm" type="button" variant="ghost" onClick={handleRecoveryCancel}>
+                      Cancel
+                    </Button>
+                  </div>
+                </form>
+              )}
 
               <Button
                 size="sm"

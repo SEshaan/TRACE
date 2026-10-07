@@ -1,0 +1,41 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+Backend/.venv/
+
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# TRACE runtime data
+Backend/trace_logs.sqlite
+Backend/trace_logs.sqlite.backup
+
+# Frontend dependencies
+Frontend/node_modules/
+
+# Frontend build and generated output
+Frontend/dist/
+Frontend/.vite/
+Frontend/styled-system/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
