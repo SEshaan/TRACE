@@ -97,6 +97,7 @@ class OrderByAction:
     table: str | None = None
     action_type: str = "ORDER_BY"
     confidence: float = 1.0
+    aggregate_function: Literal["COUNT", "SUM", "AVG", "MIN", "MAX"] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

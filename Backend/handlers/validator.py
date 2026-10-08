@@ -84,6 +84,8 @@ class DeterministicValidator(Validator):
             return True
 
         if table:
+            if table not in active_tables:
+                return False
             t = schema.table(table)
             return t is not None and t.has_column(col)
 
@@ -93,6 +95,48 @@ class DeterministicValidator(Validator):
             if t and t.has_column(col):
                 return True
         return False
+
+    def _validate_column_reference(
+        self,
+        *,
+        col: str,
+        table: str | None,
+        active_tables: list[str],
+        schema: Any,
+        action_name: str,
+    ) -> None:
+        if table and table not in active_tables:
+            raise ValueError(
+                f"{action_name} table '{table}' is not active; active tables are {active_tables}."
+            )
+        if schema is not None and table is None and col != "*":
+            matching_tables = [
+                table_name
+                for table_name in active_tables
+                if (table_schema := schema.table(table_name)) is not None
+                and table_schema.has_column(col)
+            ]
+            if len(matching_tables) > 1:
+                raise ValueError(
+                    f"Column '{col}' is ambiguous across active tables "
+                    f"{matching_tables}; specify the table."
+                )
+        if not self._resolve_column(col, table, active_tables, schema):
+            raise ValueError(f"Column '{col}' not found in active tables: {active_tables}.")
+
+    @staticmethod
+    def _split_qualified_column(
+        column: str,
+        active_tables: list[str],
+    ) -> tuple[str | None, str]:
+        if "." not in column:
+            return None, column
+        table, name = column.split(".", 1)
+        if table not in active_tables:
+            raise ValueError(
+                f"Join key table '{table}' is not active; active tables are {active_tables}."
+            )
+        return table, name
 
     def _validate_select_table(self, action: Any, state: QueryState, schema: Any) -> None:
         table_name = getattr(action, "table", None)
@@ -112,8 +156,13 @@ class DeterministicValidator(Validator):
         if not col:
             raise ValueError("SELECT_COLUMN requires a column name.")
         table = getattr(action, "table", None)
-        if not self._resolve_column(col, table, active, schema):
-            raise ValueError(f"Column '{col}' not found in active tables: {active}.")
+        self._validate_column_reference(
+            col=col,
+            table=table,
+            active_tables=active,
+            schema=schema,
+            action_name="SELECT_COLUMN",
+        )
 
     def _validate_filter(self, action: Any, state: QueryState, schema: Any) -> None:
         active = self._get_active_tables(state)
@@ -126,8 +175,13 @@ class DeterministicValidator(Validator):
         if not op or op.upper() not in self.ALLOWED_OPERATORS:
             raise ValueError(f"Invalid filter operator '{op}'. Allowed: {self.ALLOWED_OPERATORS}")
         table = getattr(action, "table", None)
-        if not self._resolve_column(col, table, active, schema):
-            raise ValueError(f"Column '{col}' not found in active tables: {active}.")
+        self._validate_column_reference(
+            col=col,
+            table=table,
+            active_tables=active,
+            schema=schema,
+            action_name="FILTER",
+        )
 
     def _validate_join(self, action: Any, state: QueryState, schema: Any) -> None:
         active = self._get_active_tables(state)
@@ -146,8 +200,8 @@ class DeterministicValidator(Validator):
         if not left_on or not right_on:
             raise ValueError("JOIN requires left_on and right_on join keys.")
         
-        # Validate left_on in existing active tables
-        if not self._resolve_column(left_on, None, active, schema):
+        left_table, left_column = self._split_qualified_column(left_on, active)
+        if not self._resolve_column(left_column, left_table, active, schema):
             raise ValueError(f"Left join key '{left_on}' not found in active tables: {active}.")
         # Validate right_on in target table
         if schema and not self._resolve_column(right_on, target_table, [target_table], schema):
@@ -161,8 +215,13 @@ class DeterministicValidator(Validator):
         if not col:
             raise ValueError("GROUP_BY requires a column name.")
         table = getattr(action, "table", None)
-        if not self._resolve_column(col, table, active, schema):
-            raise ValueError(f"Column '{col}' not found in active tables: {active}.")
+        self._validate_column_reference(
+            col=col,
+            table=table,
+            active_tables=active,
+            schema=schema,
+            action_name="GROUP_BY",
+        )
 
     def _validate_aggregate(self, action: Any, state: QueryState, schema: Any) -> None:
         active = self._get_active_tables(state)
@@ -180,8 +239,13 @@ class DeterministicValidator(Validator):
         if column == "*" and str(function).upper() != "COUNT":
             raise ValueError("Only COUNT can aggregate '*'.")
         table = getattr(action, "table", None)
-        if not self._resolve_column(column, table, active, schema):
-            raise ValueError(f"Column '{column}' not found in active tables: {active}.")
+        self._validate_column_reference(
+            col=column,
+            table=table,
+            active_tables=active,
+            schema=schema,
+            action_name="AGGREGATE",
+        )
 
     def _validate_order_by(self, action: Any, state: QueryState, schema: Any) -> None:
         active = self._get_active_tables(state)
@@ -194,8 +258,33 @@ class DeterministicValidator(Validator):
         if direction.upper() not in self.ALLOWED_ORDER_DIRECTIONS:
             raise ValueError(f"Invalid order direction '{direction}'. Must be ASC or DESC.")
         table = getattr(action, "table", None)
-        if not self._resolve_column(col, table, active, schema):
-            raise ValueError(f"Column '{col}' not found in active tables: {active}.")
+        self._validate_column_reference(
+            col=col,
+            table=table,
+            active_tables=active,
+            schema=schema,
+            action_name="ORDER_BY",
+        )
+        aggregate_function = getattr(action, "aggregate_function", None)
+        if aggregate_function is not None:
+            function = str(aggregate_function).upper()
+            if function not in self.ALLOWED_AGGREGATES:
+                raise ValueError(
+                    f"Invalid ORDER_BY aggregate '{aggregate_function}'. "
+                    f"Allowed: {sorted(self.ALLOWED_AGGREGATES)}"
+                )
+            matching_aggregate = any(
+                getattr(previous, "action_type", None) == "AGGREGATE"
+                and str(getattr(previous, "function", "")).upper() == function
+                and getattr(previous, "column", None) == col
+                and getattr(previous, "table", None) == table
+                for previous in state.actions
+            )
+            if not matching_aggregate:
+                raise ValueError(
+                    f"ORDER_BY aggregate {function}({col}) must match an "
+                    "AGGREGATE action already present in the query."
+                )
 
     def _validate_limit(self, action: Any, state: QueryState, schema: Any) -> None:
         active = self._get_active_tables(state)

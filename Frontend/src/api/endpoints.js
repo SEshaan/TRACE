@@ -15,6 +15,7 @@ export const EP = {
   step: (id) => ({ method: 'POST', path: `/queries/${id}/step` }),
   checkpoint: (id) => ({ method: 'POST', path: `/queries/${id}/checkpoints` }),
   recover: (id) => ({ method: 'POST', path: `/queries/${id}/recover` }),
+  branch: (id) => ({ method: 'POST', path: `/queries/${id}/branch` }),
   finish: (id) => ({ method: 'POST', path: `/queries/${id}/finish` }),
   trace: (id) => ({ method: 'GET', path: `/queries/${id}/trace` }),
   listSessions: { method: 'GET', path: '/queries' },

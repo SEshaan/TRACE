@@ -110,6 +110,36 @@ def test_sqlite_trace_store_session_and_states(temp_trace_db: SQLiteTraceStore):
     assert len(trace.checkpoints) == 1
     assert len(trace.failures) == 1
     assert trace.failures[0].code == "VALIDATION_FAILED"
+    assert trace.failures[0].state_id == "state_2"
+
+
+def test_sqlite_trace_store_persists_branch_clarification(temp_trace_db: SQLiteTraceStore):
+    store = temp_trace_db
+    root_state = QueryState(
+        id="clarification_root",
+        parent_id=None,
+        actions=(),
+        status=QueryStatus.NEW,
+    )
+    session = store.create_session(
+        request="Find students",
+        root_state=root_state,
+    )
+    store.save_state(session.id, root_state)
+
+    store.update_session(
+        session.id,
+        current_state_id=root_state.id,
+        status=QueryStatus.ACTIVE,
+        request="Find students\n\nUser clarification: enrolled in Fall 2025",
+    )
+
+    restored = store.get_session(session.id)
+    assert restored.request.endswith(
+        "User clarification: enrolled in Fall 2025"
+    )
+    assert restored.current_state_id == root_state.id
+
 
 def test_sqlite_trace_store_round_trips_aggregate_action(temp_trace_db: SQLiteTraceStore):
     store = temp_trace_db

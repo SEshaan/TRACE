@@ -11,8 +11,8 @@
  */
 
 export const DEFAULT_LAYOUT = {
-  levelGap: 180,
-  siblingGap: 300,
+  levelGap: 260,
+  siblingGap: 380,
   originX: 320,
   originY: 20,
 };

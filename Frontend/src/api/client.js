@@ -12,7 +12,7 @@
  */
 
 import { EP } from './endpoints';
-import { request } from './transport';
+import { AGENT_STEP_TIMEOUT_MS, request } from './transport';
 import { API_ERROR, ApiError } from './errors';
 import { buildActionPayload, normalizeActionInput } from '../lib/actions';
 import {
@@ -97,8 +97,9 @@ export async function applyAction(sessionId, actionInput, maybeParameters, optio
 export async function step(sessionId, options = {}) {
   const id = requireId(sessionId, 'sessionId');
   const ep = EP.step(id);
+  const requestOptions = { timeout: AGENT_STEP_TIMEOUT_MS, ...options };
   try {
-    const data = await request(ep.path, { method: ep.method, ...options });
+    const data = await request(ep.path, { method: ep.method, ...requestOptions });
     return {
       decision: data?.decision
         ? { action_type: data.decision.action_type ?? null, parameters: data.decision.parameters ?? {} }
@@ -108,8 +109,8 @@ export async function step(sessionId, options = {}) {
     };
   } catch (err) {
     if (err instanceof ApiError && (err.code === API_ERROR.NOT_FOUND || err.code === API_ERROR.UNSUPPORTED)) {
-      const decision = await getNextAction(id, options);
-      const applied = await applyAction(id, decision, undefined, options);
+      const decision = await getNextAction(id, requestOptions);
+      const applied = await applyAction(id, decision, undefined, requestOptions);
       return { decision, ...applied, via: 'fallback' };
     }
     throw err;
@@ -191,6 +192,36 @@ export async function recover(sessionId, { checkpointId, action } = {}, options 
   });
 
   return normalizeActionResponse(data);
+}
+
+/** Branch from a checkpoint with natural-language context for the agent. */
+export async function branchFromClarification(
+  sessionId,
+  { checkpointId, clarification } = {},
+  options = {},
+) {
+  const id = requireId(sessionId, 'sessionId');
+  const text = String(clarification ?? '').trim();
+  if (!text) {
+    throw new ApiError('A clarification must be non-empty.', {
+      code: API_ERROR.PREFLIGHT,
+      fields: ['clarification'],
+    });
+  }
+  if (!checkpointId || typeof checkpointId !== 'string' || looksLikeLocalId(checkpointId)) {
+    throw new ApiError('Branching requires a real checkpoint id.', {
+      code: API_ERROR.NO_CHECKPOINT,
+      fields: ['checkpoint_id'],
+    });
+  }
+
+  const ep = EP.branch(id);
+  const data = await request(ep.path, {
+    method: ep.method,
+    body: { checkpoint_id: checkpointId, clarification: text },
+    ...options,
+  });
+  return normalizeSession(data);
 }
 
 /* ----------------------------------------------------------------- finish */

@@ -14,6 +14,11 @@ const forkTree = [
 describe('tidyTreeLayout', () => {
   const positions = tidyTreeLayout(forkTree);
 
+  it('keeps enough room between node columns and depth levels', () => {
+    expect(DEFAULT_LAYOUT.siblingGap).toBe(380);
+    expect(DEFAULT_LAYOUT.levelGap).toBe(260);
+  });
+
   it('places every node exactly once', () => {
     expect(positions.size).toBe(forkTree.length);
     for (const { id } of forkTree) expect(positions.has(id)).toBe(true);

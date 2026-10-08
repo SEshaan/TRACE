@@ -21,7 +21,7 @@ import * as api from '../api/client';
 import { API_ERROR, ApiError } from '../api/errors';
 import { buildGraph } from '../lib/traceGraph';
 import { schemaFromTrace, setSchema, loadSchema } from '../lib/schema';
-import { DEMO_FAILURE_ACTION, FAIL_STATE_ACTION_TYPES, MAX_RUN_STEPS, STEP_DELAY_MS } from '../constants/backend';
+import { FAIL_STATE_ACTION_TYPES, MAX_RUN_STEPS, STEP_DELAY_MS } from '../constants/backend';
 
 /* -------------------------------------------------------------- state ---- */
 
@@ -586,6 +586,84 @@ export async function recover({ checkpointId, stateId, action } = {}) {
   }
 }
 
+/** Branch from a checkpoint with clarification, then let the agent continue. */
+export async function branchWithClarification({
+  checkpointId,
+  stateId,
+  clarification,
+} = {}) {
+  const sessionId = state.session.id;
+  const text = String(clarification ?? '').trim();
+  if (!sessionId) {
+    const err = new ApiError('No active session to branch.', { code: API_ERROR.PREFLIGHT });
+    setError(err);
+    throw err;
+  }
+  if (!text) {
+    const err = new ApiError('Enter a clarification for the agent.', {
+      code: API_ERROR.PREFLIGHT,
+      fields: ['clarification'],
+    });
+    setError(err);
+    throw err;
+  }
+  if (state.run.controller) {
+    const err = new ApiError('Pause the current run before branching.', {
+      code: API_ERROR.PREFLIGHT,
+    });
+    setError(err);
+    throw err;
+  }
+
+  busy('branch', true);
+  try {
+    const graph = state.trace.graph;
+    let cpId = checkpointId ?? null;
+    const targetStateId = stateId ?? state.selection.id ?? state.session.current;
+
+    if (!cpId && targetStateId) {
+      cpId = graph.checkpointsByState.get(String(targetStateId))?.id ?? null;
+    }
+    if (!cpId) {
+      const created = await setCheckpoint(targetStateId, 'clarification-branch');
+      cpId = created?.id ?? null;
+    }
+    if (!cpId) {
+      const err = new ApiError('No checkpoint available for this branch.', {
+        code: API_ERROR.NO_CHECKPOINT,
+        fields: ['checkpoint_id'],
+      });
+      setError(err);
+      throw err;
+    }
+
+    const clarifiedSession = await api.branchFromClarification(sessionId, {
+      checkpointId: cpId,
+      clarification: text,
+    });
+    await refreshTrace(sessionId);
+    clearError();
+    patch('result', null);
+    if (clarifiedSession.currentStateId) selectNode(clarifiedSession.currentStateId);
+
+    const controller = new AbortController();
+    patch('run', {
+      ...initialState().run,
+      phase: 'running',
+      mode: 'auto',
+      startedAt: Date.now(),
+      controller,
+    });
+    await runLoop({ maxSteps: MAX_RUN_STEPS, stepDelayMs: STEP_DELAY_MS });
+    return getState().run;
+  } catch (err) {
+    setError(err);
+    throw err;
+  } finally {
+    busy('branch', false);
+  }
+}
+
 /**
  * Explicit FINISH. The run loop calls this itself when the agent decides to
  * finish; the button exists because the spec asks for a manual finish.
@@ -596,11 +674,36 @@ export async function finishNow() {
     setError(new ApiError('No active session to finish.', { code: API_ERROR.PREFLIGHT }));
     return null;
   }
+  if (state.run.phase === 'running') {
+    setError(new ApiError('Pause the agent before finishing the current query.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+  if (
+    state.busy.finishing ||
+    state.busy.applyAction ||
+    state.busy.branch ||
+    state.busy.checkpoint ||
+    state.busy.recover ||
+    state.busy.openSession
+  ) {
+    setError(new ApiError('Wait for the current operation to finish before finishing the query.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+  const currentNode = state.trace.graph.nodesById.get(state.trace.graph.current);
+  if (!currentNode || currentNode.actionCount < 1 || currentNode.status === 'failed') {
+    setError(new ApiError('The current state does not contain a finishable query.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+  if (state.run.phase === 'finished') return state.result;
+
+  if (state.run.phase === 'paused') abortRun();
+  clearError();
   busy('finishing', true);
   try {
     const result = await api.finish(sessionId);
     patch('result', () => result);
     await refreshTrace(sessionId);
+    patch('session', (prev) => ({ ...prev, status: 'completed' }));
     patch('run', (prev) => ({ ...prev, phase: 'finished', controller: null }));
     return result;
   } catch (err) {
@@ -611,14 +714,6 @@ export async function finishNow() {
   }
 }
 
-/**
- * Deterministic demo failure: the backend always rejects column 'CGPA'.
- * Lets the recovery demo run without depending on the LLM misbehaving.
- */
-export function forceFailure() {
-  return applyRawAction(DEMO_FAILURE_ACTION);
-}
-
 /** Apply one explicit action, then refresh the trace. */
 export async function applyRawAction(action) {
   const sessionId = state.session.id;
@@ -626,7 +721,31 @@ export async function applyRawAction(action) {
     setError(new ApiError('No active session.', { code: API_ERROR.PREFLIGHT }));
     return null;
   }
+  if (state.run.phase === 'running') {
+    setError(new ApiError('Pause the agent before applying a manual command.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+  if (
+    state.busy.applyAction ||
+    state.busy.finishing ||
+    state.busy.branch ||
+    state.busy.checkpoint ||
+    state.busy.recover ||
+    state.busy.openSession
+  ) {
+    setError(new ApiError('Wait for the current operation to finish before applying a manual command.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+  const currentNode = state.trace.graph.nodesById.get(state.trace.graph.current);
+  if (!currentNode || currentNode.actionCount < 1) {
+    setError(new ApiError('The current state does not contain a query to modify.', { code: API_ERROR.PREFLIGHT }));
+    return null;
+  }
+
+  if (state.run.phase === 'paused') abortRun();
+  clearError();
   busy('applyAction', true);
+  patch('result', null);
   try {
     const result = await api.applyAction(sessionId, action);
     await refreshTrace(sessionId);
@@ -638,6 +757,11 @@ export async function applyRawAction(action) {
           detail: result.failure,
         }),
       );
+      patch('session', (prev) => ({ ...prev, status: 'failed' }));
+      patch('run', (prev) => ({ ...prev, phase: 'failed', controller: null }));
+    } else {
+      patch('session', (prev) => ({ ...prev, status: 'active' }));
+      patch('run', initialState().run);
     }
     return result;
   } catch (err) {

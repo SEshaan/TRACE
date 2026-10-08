@@ -68,6 +68,7 @@ class InMemoryTraceStore(TraceStore):
         *,
         current_state_id: str,
         status: QueryStatus,
+        request: str | None = None,
     ) -> None:
         from datetime import datetime, timezone
 
@@ -75,7 +76,7 @@ class InMemoryTraceStore(TraceStore):
         session = self.get_session(session_id)
         self._sessions[session_id] = QuerySession(
             id=session.id,
-            request=session.request,
+            request=request if request is not None else session.request,
             root_state_id=session.root_state_id,
             current_state_id=current_state_id,
             status=status,
@@ -141,7 +142,14 @@ class InMemoryTraceStore(TraceStore):
         failure: ActionFailure,
     ) -> None:
         if session_id in self._session_failures:
-            self._session_failures[session_id].append(failure)
+            self._session_failures[session_id].append(
+                ActionFailure(
+                    action_type=failure.action_type,
+                    code=failure.code,
+                    message=failure.message,
+                    state_id=state_id,
+                )
+            )
 
     def save_checkpoint(
         self,

@@ -12,7 +12,6 @@ import { useAgent } from './hooks/useAgent'
 import { useSessionHistory } from './hooks/useSessionHistory'
 
 import { toFlowEdges, toFlowNodes } from './lib/flowMapping'
-import { parseFilterText } from './lib/actions'
 import { setNodePosition } from './store/queryStore'
 
 import {
@@ -34,9 +33,11 @@ function App() {
   const [activeBottomTab, setActiveBottomTab] = useState('sql') // 'sql' | 'results' | 'summary'
 
   const [checkpointLabel, setCheckpointLabel] = useState('checkpoint')
-  const [recoveryInput, setRecoveryInput] = useState('gpa > 8.5')
+  const [limitValue, setLimitValue] = useState('5')
+  const [branchClarification, setBranchClarification] = useState('')
   const [recoveryOpen, setRecoveryOpen] = useState(false)
   const [actionError, setActionError] = useState(null)
+  const [manualActionError, setManualActionError] = useState(null)
 
   const session = useSession()
   const run = useQueryRun()
@@ -66,11 +67,32 @@ function App() {
       (node) => node.id === session.selectedNodeId,
     )?.data ?? null
 
+  const currentNode = session.graph.current
+    ? session.graph.nodesById.get(session.graph.current) ?? null
+    : null
+
   const result = run.result
 
   const isRunning = run.isRunning
   const isOnline = session.isOnline
   const isCheckingBackend = session.isChecking
+  const isApplyingAction =
+    session.busy?.applyAction === true
+  const isFinishing = session.busy?.finishing === true
+  const canApplyLimit = Boolean(
+    session.session.id &&
+    (currentNode?.actionCount ?? 0) > 0 &&
+    !isRunning &&
+    !session.isBusy,
+  )
+  const canFinish = Boolean(
+    session.session.id &&
+    (currentNode?.actionCount ?? 0) > 0 &&
+    currentNode?.status !== 'failed' &&
+    !isRunning &&
+    !run.isFinished &&
+    !session.isBusy,
+  )
 
   const errorMessage = session.error?.message ?? run.error?.message ?? null
 
@@ -94,18 +116,24 @@ function App() {
   }
 
   const handleRecover = (node) => {
-    let action
-
-    try {
-      action = parseFilterText(recoveryInput)
-    } catch (err) {
-      setActionError(err.message)
+    if (!branchClarification.trim()) {
+      setActionError('Enter a clarification for the agent.')
       return
     }
-
     setActionError(null)
-    session.recover({ checkpointId: node.checkpoint_id, action }).then((result) => {
-      if (result) setRecoveryOpen(false)
+    const baseStateId =
+      node.isDeclined && node.parentId
+        ? node.parentId
+        : node.id
+    session.branchWithClarification({
+      checkpointId: node.isDeclined ? null : node.checkpoint_id,
+      stateId: baseStateId,
+      clarification: branchClarification,
+    }).then((result) => {
+      if (result) {
+        setRecoveryOpen(false)
+        setBranchClarification('')
+      }
     }).catch(() => {
       // The store exposes the normalized error banner.
     })
@@ -113,6 +141,7 @@ function App() {
 
   const handleNewQuery = () => {
     setInputQuery('')
+    setBranchClarification('')
     setRecoveryOpen(false)
     run.abort()
     session.reset()
@@ -123,12 +152,31 @@ function App() {
   }
 
   const handleRecoveryCancel = () => {
+    setBranchClarification('')
     setRecoveryOpen(false)
   }
 
   const handleRecoverySubmit = (event, node) => {
     event.preventDefault()
     handleRecover(node)
+  }
+
+  const handleApplyLimit = async (event) => {
+    event.preventDefault()
+    const limit = Number(limitValue)
+    if (!Number.isSafeInteger(limit) || limit < 1) {
+      setManualActionError('Enter a whole-number limit of at least 1.')
+      return
+    }
+
+    setManualActionError(null)
+    const actionResult = await session.applyAction({
+      action_type: 'LIMIT',
+      parameters: { limit },
+    })
+    if (actionResult?.failure) {
+      setManualActionError(actionResult.failure.message)
+    }
   }
 
   const onNodesChange = useCallback((changes) => {
@@ -1932,7 +1980,9 @@ function App() {
                   Boolean(
                     selectedNode.checkpoint_id,
                   ) ||
-                  !session.session.id
+                  !session.session.id ||
+                  isRunning ||
+                  session.isBusy
                 }
 
                 className={css({
@@ -1959,9 +2009,11 @@ function App() {
                   })}
                 />
 
-                {selectedNode.checkpoint_id
-                  ? 'Checkpoint Pinned'
-                  : 'Set Checkpoint'}
+                {session.busy?.checkpoint
+                  ? 'Setting checkpoint…'
+                  : selectedNode.checkpoint_id
+                    ? 'Checkpoint Pinned'
+                    : 'Set Checkpoint'}
               </Button>
 
               {!selectedNode.checkpoint_id && (
@@ -1972,6 +2024,11 @@ function App() {
                     setCheckpointLabel(
                       event.target.value,
                     )
+                  }
+
+                  disabled={
+                    isRunning ||
+                    session.isBusy
                   }
 
                   aria-label="Checkpoint label"
@@ -2020,7 +2077,8 @@ function App() {
 
                 disabled={
                   !session.session.id ||
-                  session.busy?.recover === true
+                  isRunning ||
+                  session.isBusy
                 }
 
                 className={css({
@@ -2045,9 +2103,11 @@ function App() {
                   })}
                 />
 
-                {recoveryOpen
-                  ? 'Close recovery'
-                  : 'Branch / Recompute'}
+                {session.busy?.branch
+                  ? 'Branching…'
+                  : recoveryOpen
+                    ? 'Close recovery'
+                    : 'Branch with clarification'}
               </Button>
 
               {recoveryOpen && (
@@ -2075,7 +2135,7 @@ function App() {
                   })}
                 >
                   <label
-                    htmlFor="recovery-filter"
+                    htmlFor="branch-clarification"
 
                     className={css({
                       color: '#52525b',
@@ -2087,26 +2147,32 @@ function App() {
                       textTransform: 'uppercase',
                     })}
                   >
-                    Correction filter
+                    Clarification for the agent
                   </label>
 
-                  <input
-                    id="recovery-filter"
+                  <textarea
+                    id="branch-clarification"
 
-                    value={recoveryInput}
+                    value={branchClarification}
 
                     onChange={(event) =>
-                      setRecoveryInput(
+                      setBranchClarification(
                         event.target.value,
                       )
                     }
 
-                    placeholder="gpa > 8.5"
+                    placeholder="For high GPA, use 8.5 as the minimum."
+
+                    disabled={
+                      session.busy?.branch === true
+                    }
 
                     className={`trace-input ${css({
-                      h: '8',
+                      minH: '20',
 
                       px: '2.5',
+
+                      py: '2',
 
                       borderWidth: '1px',
 
@@ -2155,11 +2221,11 @@ function App() {
                       type="submit"
 
                       disabled={
-                        session.busy?.recover ===
-                        true
+                        isRunning ||
+                        session.isBusy
                       }
                     >
-                      Apply correction
+                      Ask agent and continue
                     </Button>
 
                     <Button
@@ -2179,63 +2245,117 @@ function App() {
                 </form>
               )}
 
-              <Button
-                size="sm"
-
-                variant="outline"
-
-                onClick={() =>
-                  session.applyAction({
-                    action_type: 'LIMIT',
-
-                    parameters: {
-                      limit: 5,
-                    },
-                  })
-                }
-
-                disabled={
-                  !session.session.id
-                }
-
-                title="Apply an explicit action to the current state"
-
+              <form
+                onSubmit={handleApplyLimit}
                 className={css({
-                  borderRadius: '8px',
-
-                  borderColor: '#d4d4d8',
-
-                  fontWeight: '600',
+                  display: 'grid',
+                  gap: '2',
+                  p: '3',
+                  bg: 'white',
+                  border: '1px solid #dedee3',
+                  borderRadius: '9px',
                 })}
               >
-                Apply LIMIT 5
-              </Button>
+                <label
+                  htmlFor="manual-limit"
+                  className={css({
+                    color: '#52525b',
+                    fontSize: '10px',
+                    fontWeight: '700',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                  })}
+                >
+                  Manual command
+                </label>
 
-              <Button
-                size="sm"
+                <p
+                  className={css({
+                    color: '#71717a',
+                    fontSize: '11px',
+                    lineHeight: '1.5',
+                  })}
+                >
+                  Append to current state {session.graph.current
+                    ? `(${session.graph.current.slice(0, 8)})`
+                    : ''}, not the selected node.
+                </p>
+                {(currentNode?.actionCount ?? 0) < 1 && (
+                  <p
+                    className={css({
+                      color: '#71717a',
+                      fontSize: '11px',
+                      lineHeight: '1.5',
+                    })}
+                  >
+                    Run at least one query action before applying a command.
+                  </p>
+                )}
 
-                variant="outline"
+                <div
+                  className={css({
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    gap: '2',
+                  })}
+                >
+                  <input
+                    id="manual-limit"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={limitValue}
+                    onChange={(event) => {
+                      setLimitValue(event.target.value)
+                      setManualActionError(null)
+                    }}
+                    aria-label="Row limit"
+                    className={`trace-input ${css({
+                      minW: '0',
+                      h: '9',
+                      px: '2',
+                      borderWidth: '1px',
+                      borderColor: '#d4d4d8',
+                      borderRadius: '8px',
+                      bg: '#fafafa',
+                      color: '#18181b',
+                      fontSize: 'xs',
+                      outline: 'none',
+                      _focus: { borderColor: '#18181b' },
+                    })}`}
+                  />
 
-                onClick={
-                  session.forceFailure
-                }
+                  <Button
+                    size="sm"
+                    type="submit"
+                    variant="outline"
+                    disabled={!canApplyLimit}
+                    className={css({
+                      borderRadius: '8px',
+                      borderColor: '#d4d4d8',
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap',
+                    })}
+                  >
+                    {isApplyingAction
+                      ? 'Applying…'
+                      : `Apply LIMIT ${limitValue || '—'}`}
+                  </Button>
+                </div>
 
-                disabled={
-                  !session.session.id
-                }
-
-                title="Apply FILTER on column CGPA, which the backend always rejects"
-
-                className={css({
-                  borderRadius: '8px',
-
-                  borderColor: '#d4d4d8',
-
-                  fontWeight: '600',
-                })}
-              >
-                Trigger demo failure
-              </Button>
+                {manualActionError && (
+                  <p
+                    role="alert"
+                    className={css({
+                      color: 'red.700',
+                      fontSize: 'xs',
+                      fontWeight: '500',
+                    })}
+                  >
+                    {manualActionError}
+                  </p>
+                )}
+              </form>
 
               <Button
                 size="sm"
@@ -2245,7 +2365,7 @@ function App() {
                 onClick={run.finish}
 
                 disabled={
-                  !session.session.id
+                  !canFinish
                 }
 
                 className={css({
@@ -2256,7 +2376,7 @@ function App() {
                   fontWeight: '600',
                 })}
               >
-                Finish now
+                {isFinishing ? 'Finishing…' : 'Finish current query'}
               </Button>
             </div>
 

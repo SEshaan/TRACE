@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   applyAction,
+  branchFromClarification,
   createCheckpoint,
   createSession,
   getSession,
@@ -8,6 +9,7 @@ import {
   getTrace,
   listSessions,
   recover,
+  step,
 } from './client';
 import { API_ERROR } from './errors';
 import body422 from '../fixtures/api/error.422.json';
@@ -79,6 +81,16 @@ describe('requests that must never reach the network', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('requires clarification text before branching', async () => {
+    await expect(
+      branchFromClarification('sess-1', {
+        checkpointId: 'e7590711-0000-4000-8000-0000000000c4',
+        clarification: '  ',
+      }),
+    ).rejects.toMatchObject({ code: API_ERROR.PREFLIGHT });
+    expect(calls).toHaveLength(0);
+  });
+
   it('refuses an empty query request', async () => {
     await expect(createSession('   ')).rejects.toMatchObject({ code: API_ERROR.PREFLIGHT });
     expect(calls).toHaveLength(0);
@@ -120,6 +132,18 @@ describe('transport -> ApiError mapping', () => {
     });
   });
 
+  it('classifies a timed-out agent step as TIMEOUT, not backend offline', async () => {
+    global.__responder = () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    };
+
+    await expect(step('sess-1')).rejects.toMatchObject({
+      code: API_ERROR.TIMEOUT,
+      message: 'Request timed out after 180000ms.',
+    });
+    expect(calls[0].url).toContain('/step');
+  });
+
   it('reports an unimplemented list endpoint as unsupported, not as an error', async () => {
     global.__responder = () => fail(404, body404);
     await expect(listSessions()).resolves.toEqual({ items: [], unsupported: true });
@@ -146,6 +170,27 @@ describe('successful responses are normalized', () => {
 
     const body = JSON.parse(calls[0].init.body);
     expect(body).toEqual({ action_type: 'FILTER', parameters: { column: 'gpa', operator: '>', value: 8.5 } });
+  });
+
+  it('sends a natural-language clarification to the branch endpoint', async () => {
+    global.__responder = () => ok({
+      id: 'sess-1',
+      request: 'Find high GPA students\n\nUser clarification: at least 8.5',
+      root_state_id: 'root-1',
+      current_state_id: 'state-1',
+      status: 'active',
+    });
+    const session = await branchFromClarification('sess-1', {
+      checkpointId: 'e7590711-0000-4000-8000-0000000000c4',
+      clarification: '  at least 8.5  ',
+    });
+
+    expect(JSON.parse(calls[0].init.body)).toEqual({
+      checkpoint_id: 'e7590711-0000-4000-8000-0000000000c4',
+      clarification: 'at least 8.5',
+    });
+    expect(calls[0].url).toContain('/branch');
+    expect(session.status).toBe('active');
   });
 
   it('normalizes a full trace', async () => {

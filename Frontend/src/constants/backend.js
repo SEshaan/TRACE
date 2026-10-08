@@ -163,13 +163,3 @@ export const MAX_RUN_STEPS = 25;
 
 /** Animation pacing for the live demo loop. */
 export const STEP_DELAY_MS = 380;
-
-/**
- * A deterministic, always-valid failure used to demo the recovery flow.
- * `CGPA` does not exist in the demo schema, so the backend rejects it with
- * VALIDATION_FAILED every time.
- */
-export const DEMO_FAILURE_ACTION = Object.freeze({
-  action_type: ACTION_TYPES.FILTER,
-  parameters: { column: 'CGPA', operator: '>', value: 8 },
-});

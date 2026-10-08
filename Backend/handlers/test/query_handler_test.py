@@ -119,6 +119,90 @@ def test_apply_valid_actions_sequence(handler: QueryHandler):
     assert finish_res.rows[0]["name"] == "Diana"
 
 
+def test_compiler_orders_by_aggregate_expression():
+    from Backend.handlers.query_handler import QueryState
+
+    state = QueryState(
+        id="aggregate-order",
+        parent_id="aggregate",
+        actions=(
+            SelectTableAction(table="students"),
+            AggregateAction(
+                function="COUNT",
+                column="id",
+                table="students",
+            ),
+            OrderByAction(
+                column="id",
+                direction="DESC",
+                table="students",
+                aggregate_function="COUNT",
+            ),
+            LimitAction(limit=1),
+        ),
+        status=QueryStatus.ACTIVE,
+    )
+
+    sql, parameters = SQLiteCompiler().compile(state=state)
+
+    assert 'ORDER BY COUNT("students"."id") DESC' in sql
+    assert sql.endswith("LIMIT 1")
+    assert parameters == ()
+
+
+def test_validator_and_compiler_accept_qualified_join_keys(handler: QueryHandler):
+    session = handler.create("Join students to departments")
+    assert handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    ).success
+
+    joined = handler.apply_action(
+        session.id,
+        JoinAction(
+            table="departments",
+            left_on="students.department_id",
+            right_on="id",
+        ),
+    )
+
+    assert joined.success
+    assert 'ON "students"."department_id" = "departments"."id"' in joined.state.sql
+
+
+def test_validator_only_allows_ordering_by_an_existing_aggregate(handler: QueryHandler):
+    session = handler.create("Count students")
+    handler.apply_action(session.id, SelectTableAction(table="students"))
+    handler.apply_action(
+        session.id,
+        AggregateAction(function="COUNT", column="id", table="students"),
+    )
+
+    valid = handler.apply_action(
+        session.id,
+        OrderByAction(
+            column="id",
+            direction="DESC",
+            table="students",
+            aggregate_function="COUNT",
+        ),
+    )
+    assert valid.success
+
+    invalid = handler.apply_action(
+        session.id,
+        OrderByAction(
+            column="gpa",
+            direction="DESC",
+            table="students",
+            aggregate_function="SUM",
+        ),
+    )
+    assert not invalid.success
+    assert invalid.failure is not None
+    assert "must match an AGGREGATE action" in invalid.failure.message
+
+
 def test_validation_failure_handling(handler: QueryHandler):
     session = handler.create("Find invalid table")
 
@@ -129,10 +213,14 @@ def test_validation_failure_handling(handler: QueryHandler):
     assert res.failure.code == "VALIDATION_FAILED"
     assert "does not exist in schema" in res.failure.message
 
-    # Session status set to FAILED
+    # The rejected action is retained as a failed child in the trace.
     trace = handler.get_trace(session.id)
     assert len(trace.failures) == 1
     assert trace.failures[0].action_type == "SELECT_TABLE"
+    assert trace.failures[0].state_id == res.state.id
+    assert res.state.status == QueryStatus.FAILED
+    assert res.state.parent_id == session.root_state_id
+    assert res.state.actions[-1].action_type == "SELECT_TABLE"
 
 
 @pytest.mark.parametrize(
@@ -178,9 +266,121 @@ def test_pipeline_failures_are_returned_with_sqlite_trace_store(
     assert result.failure.code == expected_code
     assert result.failure.message == expected_message
     assert trace_store.get_session(session.id).status == QueryStatus.FAILED
+    assert trace_store.get_session(session.id).current_state_id == result.state.id
+    assert result.state.status == QueryStatus.FAILED
+    assert result.state.parent_id is not None
+    assert result.state.actions[-1].action_type == "SELECT_TABLE"
     trace = trace_store.get_trace(session.id)
     assert len(trace.failures) == 1
     assert trace.failures[0].code == expected_code
+    assert any(state.id == result.state.id for state in trace.states)
+
+
+def test_ambiguous_select_column_creates_failed_graph_node(
+    handler: QueryHandler,
+    tmp_path: Path,
+):
+    trace_store = SQLiteTraceStore(str(tmp_path / "ambiguous-trace.sqlite"))
+    handler.trace_store = trace_store
+    session = handler.create("Select student and department names")
+
+    table_result = handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    )
+    assert table_result.success
+    join_result = handler.apply_action(
+        session.id,
+        JoinAction(
+            table="departments",
+            left_on="department_id",
+            right_on="id",
+        ),
+    )
+    assert join_result.success
+
+    result = handler.apply_action(
+        session.id,
+        SelectColumnAction(column="name"),
+    )
+
+    assert not result.success
+    assert result.failure is not None
+    assert result.failure.code == "VALIDATION_FAILED"
+    assert "Column 'name' is ambiguous" in result.failure.message
+    assert "specify the table" in result.failure.message
+    assert result.state.status == QueryStatus.FAILED
+    assert result.state.parent_id == join_result.state.id
+    assert result.state.actions[-1].action_type == "SELECT_COLUMN"
+    trace = trace_store.get_trace(session.id)
+    failed_nodes = [state for state in trace.states if state.status == QueryStatus.FAILED]
+    assert len(failed_nodes) == 1
+    assert failed_nodes[0].id == result.state.id
+
+
+def test_agent_retries_from_parent_with_failed_sibling_and_reason(handler: QueryHandler):
+    session = handler.create("Select student name after joining departments")
+    assert handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    ).success
+    join_result = handler.apply_action(
+        session.id,
+        JoinAction(table="departments", left_on="department_id", right_on="id"),
+    )
+    assert join_result.success
+
+    class RetryDecisionModel:
+        def __init__(self):
+            self.contexts = []
+            self.actions = [
+                SelectColumnAction(column="name"),
+                SelectColumnAction(column="name", table="students"),
+            ]
+
+        def decide(self, *, request, state, environment, graph_context=None):
+            self.contexts.append(graph_context)
+            return self.actions.pop(0)
+
+    decision_model = RetryDecisionModel()
+    handler.decision_model = decision_model
+
+    result, decided_action = handler.step(session.id)
+
+    assert result.success
+    assert decided_action.table == "students"
+    assert len(decision_model.contexts) == 2
+    failed_sibling = decision_model.contexts[1]["failed_siblings"][0]
+    assert failed_sibling["action_type"] == "SELECT_COLUMN"
+    assert failed_sibling["parameters"] == {"column": "name", "table": None, "alias": None}
+    assert "ambiguous" in failed_sibling["reason"]
+
+    trace = handler.get_trace(session.id)
+    failed_state = next(state for state in trace.states if state.status == QueryStatus.FAILED)
+    current_session = handler.trace_store.get_session(session.id)
+    assert failed_state.parent_id == join_result.state.id
+    assert current_session.current_state_id == result.state.id
+    assert result.state.parent_id == join_result.state.id
+
+
+def test_select_column_uses_table_qualification_after_join(handler: QueryHandler):
+    session = handler.create("Select student name after joining departments")
+    assert handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    ).success
+    assert handler.apply_action(
+        session.id,
+        JoinAction(table="departments", left_on="department_id", right_on="id"),
+    ).success
+
+    result = handler.apply_action(
+        session.id,
+        SelectColumnAction(column="name", table="students"),
+    )
+
+    assert result.success
+    assert result.state.sql == 'SELECT "students"."name" FROM "students"\nINNER JOIN "departments" ON "students"."department_id" = "departments"."id"'
 
 
 def test_aggregate_action_compiles_and_executes(handler: QueryHandler):
@@ -286,6 +486,37 @@ def test_checkpoint_and_recovery(handler: QueryHandler):
     assert len(trace.checkpoints) == 1
     # Check that both branches exist
     assert len(trace.states) >= 4
+
+
+def test_branch_with_clarification_updates_prompt_without_adding_state(
+    handler: QueryHandler,
+):
+    session = handler.create("Students with a high GPA")
+    selected = handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    )
+    checkpoint = handler.checkpoint(
+        session.id,
+        state_id=selected.state.id,
+        label="students-selected",
+    )
+
+    branched = handler.branch_with_clarification(
+        session.id,
+        checkpoint.id,
+        "High GPA means at least 8.5.",
+    )
+    trace = handler.get_trace(session.id)
+
+    assert branched.request == (
+        "Students with a high GPA\n\n"
+        "User clarification: High GPA means at least 8.5."
+    )
+    assert branched.current_state_id == selected.state.id
+    assert branched.status == QueryStatus.ACTIVE
+    assert len(trace.states) == 2
+    assert all(state.sql for state in trace.states if state.id == selected.state.id)
 
 
 def test_join_query(handler: QueryHandler):

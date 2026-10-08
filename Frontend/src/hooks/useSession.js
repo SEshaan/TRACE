@@ -18,7 +18,7 @@ import {
   setNodePosition,
   setCheckpoint,
   recover as recoverAction,
-  forceFailure,
+  branchWithClarification as branchWithClarificationAction,
   applyRawAction,
   previewState,
   openSession,
@@ -64,7 +64,14 @@ export function useSession({ autoLoad = true } = {}) {
     traceStatus: trace.status,
     fetchedAt: trace.fetchedAt,
     busy,
-    isBusy: Boolean(busy.checkpoint || busy.recover || busy.applyAction || busy.openSession),
+    isBusy: Boolean(
+      busy.checkpoint ||
+      busy.recover ||
+      busy.branch ||
+      busy.applyAction ||
+      busy.finishing ||
+      busy.openSession
+    ),
     isOnline: capabilities.online === true,
     isChecking: capabilities.online === null,
     capabilities,
@@ -79,7 +86,7 @@ export function useSession({ autoLoad = true } = {}) {
     checkpointsForState,
     checkpointFor: (stateId) => (stateId ? checkpointsForState.get(String(stateId)) ?? null : null),
     recover: recoverAction,
-    forceFailure,
+    branchWithClarification: branchWithClarificationAction,
     applyAction: applyRawAction,
     previewState,
     reset,

@@ -3,6 +3,7 @@ import * as store from './queryStore';
 import { API_ERROR } from '../api/errors';
 import traceFixture from '../fixtures/api/trace.recovered.json';
 import finishFixture from '../fixtures/api/finish.json';
+import applyActionFixture from '../fixtures/api/applyAction.selectColumn.json';
 
 const calls = [];
 
@@ -66,6 +67,13 @@ function scriptRun(decisions, { finishBody = finishFixture } = {}) {
     if (url.includes('/finish')) return route(finishBody);
     if (url.includes('/trace')) return route(traceFixture);
     if (url.includes('/checkpoints')) return ok({ id: '9b1f5c2e-0000-4000-8000-0000000000c4', state_id: 'state-3', label: 'base' });
+    if (url.includes('/branch')) return ok({
+      id: 'sess-0000-4000-8000-000000000000',
+      request: 'select students\n\nUser clarification: at least 8.5 GPA',
+      root_state_id: 'root-1',
+      current_state_id: 'bafbad16-0000-4000-8000-000000000003',
+      status: 'active',
+    });
     if (url.includes('/recover')) return ok({ success: true, state: { id: 'state-branch', parent_id: 'state-3', status: 'active', action_count: 3 }, failure: null });
     return ok({});
   };
@@ -302,6 +310,25 @@ describe('queryStore — checkpoints and recovery', () => {
     expect(calls.filter((c) => c.url.includes('/recover'))).toHaveLength(0);
   });
 
+  it('branches with clarification and resumes the agent without applying a correction action', async () => {
+    scriptRun([{ action_type: 'FINISH', parameters: {} }]);
+    await store.openSession('sess-0000-4000-8000-000000000000');
+    store.selectNode('bafbad16-0000-4000-8000-000000000003');
+
+    await store.branchWithClarification({
+      clarification: 'At least 8.5 GPA',
+    });
+
+    const branchCall = calls.find((call) => call.url.includes('/branch'));
+    expect(JSON.parse(branchCall.body)).toEqual({
+      checkpoint_id: 'e7590711-0000-4000-8000-0000000000c4',
+      clarification: 'At least 8.5 GPA',
+    });
+    expect(calls.some((call) => call.url.includes('/step'))).toBe(true);
+    expect(calls.some((call) => call.url.includes('/recover'))).toBe(false);
+    expect(store.getState().run.phase).toBe('finished');
+  });
+
   it('reads a cached preview from the trace without a network call', async () => {
     scriptRun([]);
     await store.openSession('sess-0000-4000-8000-000000000000');
@@ -310,6 +337,41 @@ describe('queryStore — checkpoints and recovery', () => {
     const preview = store.previewState('a1d6a4af-0000-4000-8000-000000000005');
     expect(preview.rowCount).toBe(4);
     expect(calls.length).toBe(before);
+  });
+});
+
+describe('queryStore — manual commands', () => {
+  it('applies a manual LIMIT to the current session and refreshes the trace', async () => {
+    scriptRun([]);
+    await store.openSession('sess-0000-4000-8000-000000000000');
+
+    global.__responder = ({ url }) => {
+      if (url.includes('/actions')) return route(applyActionFixture);
+      if (url.includes('/trace')) return route(traceFixture);
+      return ok({});
+    };
+
+    const result = await store.applyRawAction({
+      action_type: 'LIMIT',
+      parameters: { limit: 12 },
+    });
+
+    const actionCall = calls.find((call) => call.url.includes('/actions'));
+    expect(JSON.parse(actionCall.body)).toEqual({
+      action_type: 'LIMIT',
+      parameters: { limit: 12 },
+    });
+    expect(result.success).toBe(true);
+    expect(store.getState().run.phase).toBe('idle');
+    expect(store.getState().result).toBeNull();
+  });
+
+  it('refuses to finish when there is no active session', async () => {
+    const result = await store.finishNow();
+
+    expect(result).toBeNull();
+    expect(store.getState().error.code).toBe(API_ERROR.PREFLIGHT);
+    expect(calls.some((call) => call.url.includes('/finish'))).toBe(false);
   });
 });
 

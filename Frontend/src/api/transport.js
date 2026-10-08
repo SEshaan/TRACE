@@ -16,6 +16,7 @@ import { API_ERROR, ApiError, fromResponse } from './errors';
 export const API_BASE = (import.meta.env?.VITE_API_BASE || 'http://localhost:8000').replace(/\/+$/, '');
 
 export const DEFAULT_TIMEOUT_MS = 20000;
+export const AGENT_STEP_TIMEOUT_MS = 180000;
 export const DEFAULT_GET_RETRIES = 2;
 const RETRY_BACKOFF_MS = [300, 900];
 
@@ -144,9 +145,11 @@ function normalizeThrown(err, { path, method, callerSignal, timeout }) {
     });
   }
 
-  const aborted = err?.name === 'AbortError' || callerSignal?.aborted;
+  const timedOut =
+    !callerSignal?.aborted &&
+    (err?.name === 'TimeoutError' || (err?.name === 'AbortError' && timeout > 0));
+  const aborted = timedOut || err?.name === 'AbortError' || callerSignal?.aborted;
   if (aborted) {
-    const timedOut = !callerSignal?.aborted && timeout > 0;
     return new ApiError(
       timedOut ? `Request timed out after ${timeout}ms.` : 'Request cancelled.',
       { code: timedOut ? API_ERROR.TIMEOUT : API_ERROR.ABORTED, endpoint: path, method, cause: err },

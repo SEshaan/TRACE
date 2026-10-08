@@ -34,6 +34,7 @@ export function toFlowNodes(nodes, { selectedId = null, edges = [] } = {}) {
     draggable: false,
     data: {
       id: node.id,
+      parentId: node.parentId ?? null,
       action: node.actionType,
       // Original request, shown on the START node.
       request: node.request ?? null,

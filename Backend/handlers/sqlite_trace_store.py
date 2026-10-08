@@ -146,15 +146,18 @@ class SQLiteTraceStore(TraceStore):
         *,
         current_state_id: str,
         status: QueryStatus,
+        request: str | None = None,
     ) -> None:
         with self._get_connection() as conn:
             conn.execute(
                 """
                 UPDATE query_sessions
-                SET current_state_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                SET current_state_id = ?, status = ?,
+                    request = COALESCE(?, request),
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (current_state_id, status.value, session_id),
+                (current_state_id, status.value, request, session_id),
             )
 
     def list_sessions(
@@ -399,7 +402,12 @@ class SQLiteTraceStore(TraceStore):
                 (session_id,),
             ).fetchall()
             failures = [
-                ActionFailure(action_type=r["action_type"], code=r["error_code"], message=r["error_message"])
+                ActionFailure(
+                    action_type=r["action_type"],
+                    code=r["error_code"],
+                    message=r["error_message"],
+                    state_id=r["state_id"],
+                )
                 for r in fail_rows
             ]
 
@@ -480,7 +488,13 @@ class SQLiteTraceStore(TraceStore):
                 confidence=conf,
             )
         elif atype == "ORDER_BY":
-            return OrderByAction(column=params["column"], direction=params.get("direction", "ASC"), table=params.get("table"), confidence=conf)
+            return OrderByAction(
+                column=params["column"],
+                direction=params.get("direction", "ASC"),
+                table=params.get("table"),
+                aggregate_function=params.get("aggregate_function"),
+                confidence=conf,
+            )
         elif atype == "LIMIT":
             return LimitAction(limit=int(params["limit"]), confidence=conf)
         elif atype == "FINISH":

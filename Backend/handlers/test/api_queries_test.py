@@ -165,6 +165,46 @@ def test_api_aggregate_action(client: TestClient):
     assert finish_resp.json()["rows"][0]["total_gpa"] == pytest.approx(68.1)
 
 
+def test_api_accepts_order_by_aggregate_action(client: TestClient):
+    create_resp = client.post(
+        "/queries",
+        json={"request": "Count students by GPA"},
+    )
+    assert create_resp.status_code == 201
+    session_id = create_resp.json()["id"]
+
+    table_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={"action_type": "SELECT_TABLE", "parameters": {"table": "students"}},
+    )
+    assert table_resp.json()["success"] is True
+
+    aggregate_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "AGGREGATE",
+            "parameters": {"function": "COUNT", "column": "id", "table": "students"},
+        },
+    )
+    assert aggregate_resp.json()["success"] is True
+
+    order_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "ORDER_BY",
+            "parameters": {
+                "column": "id",
+                "direction": "DESC",
+                "table": "students",
+                "aggregate_function": "COUNT",
+            },
+        },
+    )
+    assert order_resp.status_code == 200
+    assert order_resp.json()["success"] is True
+    assert 'ORDER BY COUNT("students"."id") DESC' in order_resp.json()["state"]["sql"]
+
+
 def test_api_step_endpoint(client: TestClient):
     create_resp = client.post("/queries", json={"request": "Students in Computer Science"})
     assert create_resp.status_code == 201
@@ -256,6 +296,78 @@ def test_api_insufficient_info_fail_action(client: TestClient):
     assert data["state"]["sql"] is None
     assert data["state"]["status"] == "failed"
     assert data["state"]["action"]["action_type"] == "INSUFFICIENT_INFO"
+
+
+def test_api_branch_with_clarification_does_not_add_graph_state(
+    client: TestClient,
+):
+    create_resp = client.post(
+        "/queries",
+        json={"request": "Students with a high GPA"},
+    )
+    session_id = create_resp.json()["id"]
+    action_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "SELECT_TABLE",
+            "parameters": {"table": "students"},
+        },
+    )
+    state_id = action_resp.json()["state"]["id"]
+    checkpoint_resp = client.post(
+        f"/queries/{session_id}/checkpoints",
+        json={"state_id": state_id, "label": "students-selected"},
+    )
+    checkpoint_id = checkpoint_resp.json()["id"]
+
+    branch_resp = client.post(
+        f"/queries/{session_id}/branch",
+        json={
+            "checkpoint_id": checkpoint_id,
+            "clarification": "High GPA means at least 8.5.",
+        },
+    )
+
+    assert branch_resp.status_code == 200
+    assert branch_resp.json()["current_state_id"] == state_id
+    assert branch_resp.json()["status"] == "active"
+    assert branch_resp.json()["request"].endswith(
+        "User clarification: High GPA means at least 8.5."
+    )
+    trace_resp = client.get(f"/queries/{session_id}/trace")
+    assert len(trace_resp.json()["states"]) == 2
+
+
+def test_api_trace_includes_validation_failure_node(client: TestClient):
+    create_resp = client.post(
+        "/queries",
+        json={"request": "Read from a missing table"},
+    )
+    session_id = create_resp.json()["id"]
+
+    apply_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "SELECT_TABLE",
+            "parameters": {"table": "missing_table"},
+        },
+    )
+    assert apply_resp.status_code == 200
+    failed_state = apply_resp.json()["state"]
+    assert apply_resp.json()["success"] is False
+    assert failed_state["status"] == "failed"
+    assert failed_state["action"]["action_type"] == "SELECT_TABLE"
+    assert apply_resp.json()["failure"]["state_id"] == failed_state["id"]
+
+    trace_resp = client.get(f"/queries/{session_id}/trace")
+    assert trace_resp.status_code == 200
+    trace = trace_resp.json()
+    graph_state = next(
+        state for state in trace["states"] if state["id"] == failed_state["id"]
+    )
+    assert graph_state["status"] == "failed"
+    assert graph_state["parent_id"] == failed_state["parent_id"]
+    assert trace["failures"][0]["state_id"] == failed_state["id"]
 
 
 def test_api_schema_missing_fail_action(client: TestClient):

@@ -110,6 +110,55 @@ describe('toFlowNodes', () => {
     expect(nodes[0].data.failure_code).toBeNull();
   });
 
+  it('preserves parent ids for clarification branches from declined nodes', () => {
+    const nodes = toFlowNodes([
+      {
+        id: 'decl-2',
+        parentId: 'state-before-decline',
+        actionType: 'INSUFFICIENT_INFO',
+      },
+    ]);
+    expect(nodes[0].data.parentId).toBe('state-before-decline');
+  });
+
+  it('attaches persisted failure details to the matching failed action node', () => {
+    const failedGraph = buildGraph({
+      session: {
+        id: 'session-1',
+        request: 'Read from a missing table',
+        current_state_id: 'failed-state',
+      },
+      states: [
+        {
+          id: 'root-state',
+          parent_id: null,
+          status: 'active',
+          action_count: 0,
+        },
+        {
+          id: 'failed-state',
+          parent_id: 'root-state',
+          status: 'failed',
+          action_count: 1,
+          action: { action_type: 'SELECT_TABLE', table: 'missing_table' },
+        },
+      ],
+      checkpoints: [],
+      failures: [
+        {
+          state_id: 'failed-state',
+          action_type: 'SELECT_TABLE',
+          code: 'VALIDATION_FAILED',
+          message: "Table 'missing_table' does not exist in schema.",
+        },
+      ],
+    });
+    const nodes = toFlowNodes(failedGraph.nodes, { edges: failedGraph.edges });
+    const failedNode = nodes.find((node) => node.id === 'failed-state');
+    expect(failedNode.data.status).toBe('FAILED');
+    expect(failedNode.data.failure_reason).toContain('does not exist in schema');
+  });
+
   it('is safe on empty input', () => {
     expect(toFlowNodes([], { edges: [] })).toEqual([]);
     expect(toFlowNodes(null, { edges: null })).toEqual([]);

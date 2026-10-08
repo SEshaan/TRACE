@@ -139,6 +139,11 @@ class RecoverQueryRequest(BaseModel):
     correction: ApplyActionRequest
 
 
+class BranchQueryRequest(BaseModel):
+    checkpoint_id: str
+    clarification: str = Field(min_length=1)
+
+
 # ============================================================================
 # Response models
 # ============================================================================
@@ -257,6 +262,7 @@ class ActionResponse(BaseModel):
                 "action_type": result.failure.action_type,
                 "code": result.failure.code,
                 "message": result.failure.message,
+                "state_id": result.failure.state_id or result.state.id,
             }
 
         return cls(
@@ -371,6 +377,7 @@ class QueryTraceResponse(BaseModel):
                     "action_type": failure.action_type,
                     "code": failure.code,
                     "message": failure.message,
+                    "state_id": failure.state_id,
                 }
                 for failure in trace.failures
             ],
@@ -468,7 +475,12 @@ def build_action(
     elif atype == "ORDER_BY":
         if "column" not in p:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="column parameter required")
-        return OrderByAction(column=p["column"], direction=p.get("direction", "ASC"), table=p.get("table"))
+        return OrderByAction(
+            column=p["column"],
+            direction=p.get("direction", "ASC"),
+            table=p.get("table"),
+            aggregate_function=p.get("aggregate_function"),
+        )
 
     elif atype == "LIMIT":
         if "limit" not in p:
@@ -869,6 +881,36 @@ def recover_query(
     return ActionResponse.from_result(
         result,
     )
+
+
+@router.post(
+    "/{session_id}/branch",
+    response_model=QuerySessionResponse,
+)
+def branch_query(
+    session_id: str,
+    body: BranchQueryRequest,
+    handler: QueryHandler = Depends(get_query_handler),
+) -> QuerySessionResponse:
+    """Resume agent planning from a checkpoint with user clarification."""
+    try:
+        session = handler.branch_with_clarification(
+            session_id=session_id,
+            checkpoint_id=body.checkpoint_id,
+            clarification=body.clarification,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Query session or checkpoint not found.",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return QuerySessionResponse.from_session(session)
 
 
 @router.post(

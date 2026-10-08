@@ -90,6 +90,7 @@ class ActionFailure:
     action_type: str
     code: str
     message: str
+    state_id: str | None = None
 
 
 # ============================================================================
@@ -302,14 +303,51 @@ def build_graph_context(session, states, checkpoints, failures):
         sibling_actions.setdefault(depth, set()).add(action_type)
     sibling_actions = {int(d): sorted(types) for d, types in sibling_actions.items()}
 
+    failures_by_state = {f.state_id: f for f in failures if f.state_id}
+    failed_siblings = []
+    current_state = states_by_id.get(current_id)
+    if current_state is not None:
+        current_depth = len(ancestors)
+        for sibling in states:
+            if sibling.parent_id != current_id:
+                continue
+            failure = failures_by_state.get(sibling.id)
+            last_action = sibling.actions[-1] if sibling.actions else None
+            if failure is None and sibling.status != QueryStatus.FAILED:
+                continue
+            action_data = getattr(last_action, "to_dict", lambda: vars(last_action))() if last_action else {}
+            failure_reason = (
+                failure.message
+                if failure is not None
+                else getattr(last_action, "reason", None)
+            )
+            failed_siblings.append({
+                "state_id": sibling.id,
+                "depth": current_depth + 1,
+                "action_type": getattr(last_action, "action_type", None),
+                "parameters": {
+                    key: value
+                    for key, value in action_data.items()
+                    if key not in {"action_type", "confidence"}
+                },
+                "code": failure.code if failure is not None else "AGENT_DECLINED",
+                "reason": failure_reason or "The agent declined this branch.",
+            })
+
     recent_failures = [
-        {"action_type": f.action_type, "code": f.code}
+        {
+            "action_type": f.action_type,
+            "code": f.code,
+            "message": f.message,
+            "state_id": f.state_id,
+        }
         for f in list(failures)[-5:]
     ]
 
     return {
         "is_recovered_branch": is_recovered_branch,
         "sibling_actions": sibling_actions,
+        "failed_siblings": failed_siblings,
         "recent_failures": recent_failures,
     }
 
@@ -466,6 +504,7 @@ class TraceStore(Protocol):
         *,
         current_state_id: str,
         status: QueryStatus,
+        request: str | None = None,
     ) -> None:
         ...
 
@@ -740,21 +779,28 @@ class QueryHandler:
                 error=exc,
             )
 
+            failed_state = QueryState(
+                id=self._new_id(),
+                parent_id=current_state.id,
+                actions=(*current_state.actions, action),
+                status=QueryStatus.FAILED,
+            )
+            self.trace_store.save_state(session_id, failed_state)
             self.trace_store.save_failure(
                 session_id=session_id,
-                state_id=current_state.id,
+                state_id=failed_state.id,
                 action=action,
                 failure=failure,
             )
 
             self.trace_store.update_session(
                 session_id,
-                current_state_id=current_state.id,
+                current_state_id=failed_state.id,
                 status=QueryStatus.FAILED,
             )
 
             return ActionResult(
-                state=current_state,
+                state=failed_state,
                 failure=failure,
             )
 
@@ -846,21 +892,28 @@ class QueryHandler:
                 message=str(exc),
             )
 
+            failed_state = QueryState(
+                id=next_state.id,
+                parent_id=next_state.parent_id,
+                actions=next_state.actions,
+                status=QueryStatus.FAILED,
+            )
+            self.trace_store.save_state(session_id, failed_state)
             self.trace_store.save_failure(
                 session_id=session_id,
-                state_id=current_state.id,
+                state_id=failed_state.id,
                 action=action,
                 failure=failure,
             )
 
             self.trace_store.update_session(
                 session_id,
-                current_state_id=current_state.id,
+                current_state_id=failed_state.id,
                 status=QueryStatus.FAILED,
             )
 
             return ActionResult(
-                state=current_state,
+                state=failed_state,
                 failure=failure,
             )
 
@@ -882,21 +935,29 @@ class QueryHandler:
                 message=str(exc),
             )
 
+            failed_state = QueryState(
+                id=next_state.id,
+                parent_id=next_state.parent_id,
+                actions=next_state.actions,
+                status=QueryStatus.FAILED,
+                sql=sql,
+            )
+            self.trace_store.save_state(session_id, failed_state)
             self.trace_store.save_failure(
                 session_id=session_id,
-                state_id=current_state.id,
+                state_id=failed_state.id,
                 action=action,
                 failure=failure,
             )
 
             self.trace_store.update_session(
                 session_id,
-                current_state_id=current_state.id,
+                current_state_id=failed_state.id,
                 status=QueryStatus.FAILED,
             )
 
             return ActionResult(
-                state=current_state,
+                state=failed_state,
                 failure=failure,
             )
 
@@ -945,9 +1006,36 @@ class QueryHandler:
     ) -> tuple[ActionResult, QueryAction]:
         """
         Decide the next action and apply it in a single step.
+
+        Failed decisions remain in the trace as sibling nodes. The agent is
+        then retried from the failed node's parent with the failure reason in
+        its graph context, up to a bounded number of attempts.
         """
-        action = self.next_action(session_id)
-        result = self.apply_action(session_id, action)
+        max_attempts = 3
+        result: ActionResult | None = None
+        action: QueryAction | None = None
+
+        for _ in range(max_attempts):
+            session = self.trace_store.get_session(session_id)
+            attempted_state_id = session.current_state_id
+            action = self.next_action(session_id)
+            result = self.apply_action(session_id, action)
+            if result.success:
+                return result, action
+
+            failed_state = result.state
+            retry_from_state_id = (
+                failed_state.parent_id
+                if failed_state.id != attempted_state_id and failed_state.parent_id
+                else attempted_state_id
+            )
+            self.trace_store.update_session(
+                session_id,
+                current_state_id=retry_from_state_id,
+                status=QueryStatus.ACTIVE,
+            )
+
+        assert result is not None and action is not None
         return result, action
 
     # ======================================================================
@@ -1061,6 +1149,35 @@ class QueryHandler:
             )
 
         return result
+
+    def branch_with_clarification(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        clarification: str,
+    ) -> QuerySession:
+        """Resume agent planning from a checkpoint using new user context."""
+        clarification = clarification.strip()
+        if not clarification:
+            raise ValueError("clarification cannot be empty")
+
+        session = self.trace_store.get_session(session_id)
+        session_checkpoints = self.trace_store.get_trace(session_id).checkpoints
+        if not any(item.id == checkpoint_id for item in session_checkpoints):
+            raise KeyError(f"Checkpoint '{checkpoint_id}' not found in session.")
+        checkpoint = self.trace_store.get_checkpoint(checkpoint_id)
+        checkpoint_state = self.trace_store.get_state(checkpoint.state_id)
+        clarified_request = (
+            f"{session.request}\n\nUser clarification: {clarification}"
+        )
+
+        self.trace_store.update_session(
+            session_id,
+            current_state_id=checkpoint_state.id,
+            status=QueryStatus.ACTIVE,
+            request=clarified_request,
+        )
+        return self.trace_store.get_session(session_id)
 
     # ======================================================================
     # Final execution

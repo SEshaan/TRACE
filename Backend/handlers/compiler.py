@@ -23,7 +23,7 @@ class SQLiteCompiler(SQLCompiler):
         joins: list[tuple[str, str, str, str]] = []  # (join_type, table, left_on, right_on)
         filters: list[tuple[str, str, Any, str | None]] = []  # (col, op, val, table)
         group_by: list[str] = []
-        order_by: list[tuple[str, str, str | None]] = []  # (col, direction, table)
+        order_by: list[tuple[str, str, str | None, str | None]] = []
         limit: int | None = None
 
         for action in state.actions:
@@ -86,6 +86,7 @@ class SQLiteCompiler(SQLCompiler):
                     getattr(action, "column"),
                     getattr(action, "direction", "ASC"),
                     getattr(action, "table", None),
+                    getattr(action, "aggregate_function", None),
                 ))
 
             elif atype == "LIMIT":
@@ -140,8 +141,17 @@ class SQLiteCompiler(SQLCompiler):
             sql_parts.append(f"GROUP BY {', '.join(group_by)}")
         if order_by:
             order_clauses = [
-                f"{self._quote_id(t) + '.' if t else ''}{self._quote_id(c)} {d.upper()}"
-                for c, d, t in order_by
+                (
+                    f"{function.upper()}("
+                    f"{self._quote_id(table) + '.' if table else ''}{self._quote_id(column)}"
+                    f") {direction.upper()}"
+                    if function
+                    else (
+                        f"{self._quote_id(table) + '.' if table else ''}"
+                        f"{self._quote_id(column)} {direction.upper()}"
+                    )
+                )
+                for column, direction, table, function in order_by
             ]
             sql_parts.append(f"ORDER BY {', '.join(order_clauses)}")
         if limit is not None:
