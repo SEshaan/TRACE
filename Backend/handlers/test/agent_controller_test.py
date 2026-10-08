@@ -51,6 +51,14 @@ def test_agent_controller_switching():
     controller = AgentController(default_agent="rule")
     assert controller.active_agent_type == "rule"
 
+    action = controller.decide(
+        request="Find students",
+        state=QueryState(id="1", parent_id=None, actions=(), status=QueryStatus.NEW),
+        environment=None,
+        graph_context={"sibling_actions": {}},
+    )
+    assert action.action_type == "SELECT_TABLE"
+
     # Register mock model
     mock_model = MagicMock()
     mock_model.decide.return_value = SelectTableAction(table="students", confidence=0.99)

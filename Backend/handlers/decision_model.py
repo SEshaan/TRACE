@@ -17,7 +17,9 @@ class RuleBasedDecisionModel(DecisionModel):
         request: str,
         state: QueryState,
         environment: Any,
+        graph_context: dict | None = None,
     ) -> QueryAction:
+        _ = graph_context
         schema = environment
         actions = state.actions
 
