@@ -15,6 +15,7 @@ if str(_WORKSPACE_ROOT / "Backend") not in sys.path:
 from Backend.db_adapters.sqlite_adapter import SQLiteAdapter
 from Backend.handlers import (
     ActionFailure,
+    AggregateAction,
     Checkpoint,
     FilterAction,
     PreviewResult,
@@ -108,7 +109,49 @@ def test_sqlite_trace_store_session_and_states(temp_trace_db: SQLiteTraceStore):
     assert len(trace.states) == 2
     assert len(trace.checkpoints) == 1
     assert len(trace.failures) == 1
-    assert trace.failures[0].error_code if hasattr(trace.failures[0], "error_code") else trace.failures[0].code == "VALIDATION_FAILED"
+    assert trace.failures[0].code == "VALIDATION_FAILED"
+
+def test_sqlite_trace_store_round_trips_aggregate_action(temp_trace_db: SQLiteTraceStore):
+    store = temp_trace_db
+    session = store.create_session(
+        request="Count students",
+        root_state=QueryState(
+            id="root_aggregate",
+            parent_id=None,
+            actions=(),
+            status=QueryStatus.NEW,
+        ),
+    )
+    store.save_state(
+        session.id,
+        QueryState(
+            id="root_aggregate",
+            parent_id=None,
+            actions=(),
+            status=QueryStatus.NEW,
+        ),
+    )
+    state = QueryState(
+        id="aggregate_state",
+        parent_id="root_aggregate",
+        actions=(
+            SelectTableAction(table="students"),
+            AggregateAction(
+                function="COUNT",
+                column="*",
+                alias="student_count",
+            ),
+        ),
+        status=QueryStatus.ACTIVE,
+    )
+    store.save_state(session.id, state)
+
+    restored = store.get_state(state.id)
+    aggregate = restored.actions[-1]
+    assert isinstance(aggregate, AggregateAction)
+    assert aggregate.function == "COUNT"
+    assert aggregate.column == "*"
+    assert aggregate.alias == "student_count"
 
 
 def test_sqlite_trace_store_schema_metadata_sync(temp_trace_db: SQLiteTraceStore):

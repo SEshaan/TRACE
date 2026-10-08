@@ -67,7 +67,7 @@ function getActionConfig(action) {
       badgeBorder: 'blue.200',
     }
   }
-  if (norm.includes('GROUP') || norm.includes('HAVING')) {
+  if (norm.includes('GROUP') || norm.includes('HAVING') || norm.includes('AGGREGATE')) {
     return {
       label: norm.includes('HAVING') ? 'HAVING' : 'GROUP_BY',
       Icon: Layers,
@@ -596,6 +596,87 @@ function QueryActionNode({ data, selected }) {
           },
         })}
       />
+
+      {selected && data.preview && (
+        <div
+          className={`nodrag nowheel ${css({
+            position: 'absolute',
+            left: 'calc(100% + 16px)',
+            top: '0',
+            zIndex: 20,
+            width: '320px',
+            maxHeight: '260px',
+            overflow: 'auto',
+            border: '1px solid #d4d4d8',
+            borderRadius: '8px',
+            background: 'white',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.14)',
+            padding: '10px',
+            color: '#27272a',
+          })}`}
+        >
+          <p
+            className={css({
+              mb: '2',
+              color: '#71717a',
+              fontSize: '10px',
+              fontWeight: '700',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            })}
+          >
+            Preview ({data.preview.rowCount ?? data.preview.rows?.length ?? 0} rows)
+          </p>
+          <div className={css({ overflowX: 'auto' })}>
+            <table
+              className={css({
+                width: '100%',
+                borderCollapse: 'collapse',
+                textAlign: 'left',
+                fontSize: '10px',
+              })}
+            >
+              <thead>
+                <tr className={css({ bg: '#f4f4f5' })}>
+                  {(data.preview.columns ?? []).map((column) => (
+                    <th
+                      key={column}
+                      className={css({
+                        p: '1.5',
+                        borderBottom: '1px solid #e4e4e7',
+                        color: '#52525b',
+                        fontWeight: '700',
+                        whiteSpace: 'nowrap',
+                      })}
+                    >
+                      {column}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(data.preview.rows ?? []).slice(0, 5).map((row, index) => (
+                  <tr key={index}>
+                    {(data.preview.columns ?? []).map((column) => (
+                      <td
+                        key={column}
+                        className={css({
+                          p: '1.5',
+                          borderBottom: '1px solid #f4f4f5',
+                          color: '#3f3f46',
+                          whiteSpace: 'nowrap',
+                        })}
+                      >
+                        {String(row[column] ?? '')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

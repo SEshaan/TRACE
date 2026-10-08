@@ -98,7 +98,8 @@ describe('queryStore — the run loop', () => {
     expect(state.run.phase).toBe('finished');
     expect(state.run.stepIndex).toBe(2);
     expect(state.result.rowCount).toBe(4);
-    expect(state.result.sql).toContain('WHERE "gpa" > ?');
+    expect(state.result.sql).toBe('SELECT * FROM students\nWHERE gpa > 8.5');
+    expect(state.result.executionSql).toBe('SELECT * FROM "students"\nWHERE "gpa" > ?');
     expect(state.error).toBeNull();
   });
 

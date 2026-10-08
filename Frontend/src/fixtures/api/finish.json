@@ -8,7 +8,8 @@
     "preview": null,
     "action": { "column": "gpa", "operator": ">", "value": 8.5, "action_type": "FILTER", "confidence": 1.0 }
   },
-  "sql": "SELECT * FROM \"students\"\nWHERE \"gpa\" > ?",
+  "sql": "SELECT * FROM students\nWHERE gpa > 8.5",
+  "execution_sql": "SELECT * FROM \"students\"\nWHERE \"gpa\" > ?",
   "columns": ["id", "name", "gpa", "department_id"],
   "rows": [
     { "id": 1, "name": "Alice", "gpa": 9.2, "department_id": 1 },

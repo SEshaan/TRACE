@@ -74,6 +74,21 @@ class GroupByAction:
 
 
 @dataclass(frozen=True)
+class AggregateAction:
+    """Add a supported aggregate expression to the query projection."""
+
+    function: Literal["COUNT", "SUM", "AVG", "MIN", "MAX"]
+    column: str
+    table: str | None = None
+    alias: str | None = None
+    action_type: str = "AGGREGATE"
+    confidence: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class OrderByAction:
     """Sort query results."""
 
@@ -169,6 +184,7 @@ ActionUnion = (
     | FilterAction
     | JoinAction
     | GroupByAction
+    | AggregateAction
     | OrderByAction
     | LimitAction
     | FinishAction

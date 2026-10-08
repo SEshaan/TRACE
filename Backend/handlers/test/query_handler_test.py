@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -13,8 +14,10 @@ if str(_TEST_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_TEST_DIR.parent))
 
 from Backend.db_adapters.sqlite_adapter import SQLiteAdapter
+from Backend.handlers.sqlite_trace_store import SQLiteTraceStore
 from Backend.handlers import (
     AbortQueryAction,
+    AggregateAction,
     DeterministicValidator,
     DefaultQueryStateEngine,
     FilterAction,
@@ -130,6 +133,124 @@ def test_validation_failure_handling(handler: QueryHandler):
     trace = handler.get_trace(session.id)
     assert len(trace.failures) == 1
     assert trace.failures[0].action_type == "SELECT_TABLE"
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_code"),
+    [
+        ("compile", "SQL_COMPILATION_FAILED"),
+        ("execute", "DATABASE_EXECUTION_FAILED"),
+    ],
+)
+def test_pipeline_failures_are_returned_with_sqlite_trace_store(
+    handler: QueryHandler,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+    expected_code: str,
+):
+    trace_store = SQLiteTraceStore(str(tmp_path / "trace.sqlite"))
+    handler.trace_store = trace_store
+    session = handler.create("Query students")
+
+    if failure_stage == "compile":
+        monkeypatch.setattr(
+            handler.compiler,
+            "compile",
+            Mock(side_effect=RuntimeError("compiler failure")),
+        )
+        expected_message = "compiler failure"
+    else:
+        monkeypatch.setattr(
+            handler.database,
+            "execute",
+            Mock(side_effect=RuntimeError("database failure")),
+        )
+        expected_message = "database failure"
+
+    result = handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    )
+
+    assert not result.success
+    assert result.failure is not None
+    assert result.failure.code == expected_code
+    assert result.failure.message == expected_message
+    assert trace_store.get_session(session.id).status == QueryStatus.FAILED
+    trace = trace_store.get_trace(session.id)
+    assert len(trace.failures) == 1
+    assert trace.failures[0].code == expected_code
+
+
+def test_aggregate_action_compiles_and_executes(handler: QueryHandler):
+    session = handler.create("Sum student GPA")
+    table_result = handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    )
+    assert table_result.success
+
+    aggregate_result = handler.apply_action(
+        session.id,
+        AggregateAction(function="SUM", column="gpa", alias="total_gpa"),
+    )
+    assert aggregate_result.success
+    assert aggregate_result.state.sql == (
+        'SELECT SUM("gpa") AS "total_gpa" FROM "students"'
+    )
+    assert aggregate_result.preview is not None
+    assert aggregate_result.preview.rows[0]["total_gpa"] == pytest.approx(68.1)
+
+    result = handler.finish(session.id)
+    assert result.sql == aggregate_result.state.sql
+    assert result.rows[0]["total_gpa"] == pytest.approx(68.1)
+
+
+def test_count_all_with_group_by(handler: QueryHandler):
+    session = handler.create("Count students per department")
+    assert handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    ).success
+    assert handler.apply_action(
+        session.id,
+        GroupByAction(column="department_id"),
+    ).success
+    result = handler.apply_action(
+        session.id,
+        AggregateAction(function="COUNT", column="*", alias="student_count"),
+    )
+
+    assert result.success
+    assert result.state.sql == (
+        'SELECT COUNT(*) AS "student_count" FROM "students"\n'
+        'GROUP BY "department_id"'
+    )
+    assert sum(row["student_count"] for row in result.preview.rows) == 8
+
+
+@pytest.mark.parametrize(
+    ("function", "column", "message"),
+    [
+        ("MEDIAN", "gpa", "Invalid aggregate function"),
+        ("SUM", "*", "Only COUNT can aggregate '*'"),
+    ],
+)
+def test_aggregate_action_rejects_invalid_input(handler, function, column, message):
+    session = handler.create("Aggregate student data")
+    assert handler.apply_action(
+        session.id,
+        SelectTableAction(table="students"),
+    ).success
+    result = handler.apply_action(
+        session.id,
+        AggregateAction(function=function, column=column),
+    )
+
+    assert not result.success
+    assert result.failure is not None
+    assert message in result.failure.message
 
 
 def test_checkpoint_and_recovery(handler: QueryHandler):

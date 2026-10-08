@@ -21,6 +21,7 @@ import {
   Play,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Footprints,
   StepForward,
@@ -2259,137 +2260,6 @@ function App() {
               </Button>
             </div>
 
-            {/* ==================================================
-                PREVIEW
-            ================================================== */}
-
-            {session.previewState(
-              selectedNode.id,
-            ) && (
-              <div>
-                <p
-                  className={css({
-                    color: '#71717a',
-
-                    fontSize: '10px',
-
-                    fontWeight: '600',
-
-                    textTransform: 'uppercase',
-
-                    letterSpacing: '0.04em',
-                  })}
-                >
-                  Intermediate preview (
-                  {session.previewState(
-                    selectedNode.id,
-                  ).rowCount ?? 0}{' '}
-                  rows)
-                </p>
-
-                <div
-                  className={css({
-                    mt: '2',
-
-                    overflowX: 'auto',
-
-                    border:
-                      '1px solid #e4e4e7',
-
-                    borderRadius: '8px',
-                  })}
-                >
-                  <table
-                    className={css({
-                      width: '100%',
-
-                      borderCollapse: 'collapse',
-
-                      textAlign: 'left',
-
-                      fontSize: '10px',
-                    })}
-                  >
-                    <thead>
-                      <tr
-                        className={css({
-                          bg: '#f4f4f5',
-
-                          borderBottom:
-                            '1px solid',
-
-                          borderColor: '#e4e4e7',
-                        })}
-                      >
-                        {(
-                          session.previewState(
-                            selectedNode.id,
-                          ).columns ?? []
-                        ).map((col) => (
-                          <th
-                            key={col}
-
-                            className={css({
-                              p: '1.5',
-
-                              color: '#52525b',
-
-                              fontWeight: '700',
-                            })}
-                          >
-                            {col}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {(
-                        session.previewState(
-                          selectedNode.id,
-                        ).rows ?? []
-                      )
-                        .slice(0, 5)
-                        .map((row, idx) => (
-                          <tr
-                            key={idx}
-
-                            className={css({
-                              borderBottom:
-                                '1px solid',
-
-                              borderColor:
-                                '#f4f4f5',
-                            })}
-                          >
-                            {(
-                              session.previewState(
-                                selectedNode.id,
-                              ).columns ?? []
-                            ).map((col) => (
-                              <td
-                                key={col}
-
-                                className={css({
-                                  p: '1.5',
-
-                                  color: '#3f3f46',
-
-                                  fontWeight: '500',
-                                })}
-                              >
-                                {String(
-                                  row[col] ?? '',
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           <div
@@ -2423,8 +2293,8 @@ function App() {
               })}
             >
               Click any step in the query graph to
-              inspect its parameters, preview rows,
-              and recovery options.
+              inspect its parameters and recovery
+              options.
             </p>
           </div>
         )}
@@ -2571,7 +2441,9 @@ function App() {
                 whiteSpace: 'pre-wrap',
               })}
             >
-              {result?.sql ||
+              {result?.displaySql ||
+                result?.sql ||
+                selectedNode?.displaySql ||
                 selectedNode?.sql ||
                 'No SQL generated yet.'}
             </pre>

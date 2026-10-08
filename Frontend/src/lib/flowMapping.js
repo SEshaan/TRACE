@@ -63,6 +63,8 @@ export function toFlowNodes(nodes, { selectedId = null, edges = [] } = {}) {
       is_active_branch: node.onActivePath !== false,
       branch_id: node.branchId ?? 'main',
       sql: node.sql ?? null,
+      displaySql: node.displaySql ?? null,
+      preview: node.preview ?? null,
       depth: node.depth ?? 0,
       isCurrent: node.isCurrent === true,
     },

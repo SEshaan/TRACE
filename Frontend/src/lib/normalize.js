@@ -86,6 +86,7 @@ export function normalizeState(state) {
     status: state.status ?? null,
     actionCount: state.action_count ?? 0,
     sql: state.sql ?? null,
+    displaySql: state.display_sql ?? null,
     action: normalizeAction(state.action),
     preview,
     /** Populated once the backend persists agent_decisions. Null until then. */
@@ -119,7 +120,9 @@ export function normalizeResult(result) {
   const rows = Array.isArray(result.rows) ? result.rows : [];
   return {
     state: normalizeState(result.state),
-    sql: result.sql ?? null,
+    sql: result.display_sql ?? result.sql ?? null,
+    displaySql: result.display_sql ?? result.sql ?? null,
+    executionSql: result.execution_sql ?? null,
     columns: Array.isArray(result.columns) ? result.columns : [],
     rows,
     rowCount: result.row_count ?? rows.length,

@@ -19,6 +19,7 @@ import {
   ACTION_TYPES,
   ACTION_TYPE_LIST,
   ACTIONS_REQUIRING_BASE_TABLE,
+  AGGREGATE_FUNCTIONS,
   JOIN_TYPES,
   OPERATORS,
   ORDER_DIRECTIONS,
@@ -164,6 +165,17 @@ function coerce(raw, rule, name, actionType) {
       return jt;
     }
 
+    case 'aggregate': {
+      const fn = String(raw).trim().toUpperCase();
+      if (!AGGREGATE_FUNCTIONS.includes(fn)) {
+        throw new ApiError(
+          `${actionType}.${name} must be one of: ${AGGREGATE_FUNCTIONS.join(', ')}. Got '${raw}'.`,
+          { code: API_ERROR.PREFLIGHT, fields: [name] },
+        );
+      }
+      return fn;
+    }
+
     case 'json':
       if (typeof raw === 'string') {
         const trimmed = raw.trim();
@@ -210,6 +222,14 @@ export function preflightValidate(actionType, parameters = {}, context = {}) {
 
   if (actionType === ACTION_TYPES.SELECT_TABLE && tables.length > 0) {
     errors.push({ message: `Base table already selected: ${tables[0]}. Use JOIN to add tables.` });
+  }
+
+  if (
+    actionType === ACTION_TYPES.AGGREGATE
+    && parameters.column === '*'
+    && String(parameters.function ?? '').toUpperCase() !== 'COUNT'
+  ) {
+    errors.push({ field: 'column', message: "Only COUNT can aggregate '*'." });
   }
 
   if (schemaKnown) {
@@ -262,6 +282,8 @@ export function describeAction(actionType, parameters = {}) {
       return `JOIN ${p.table ?? '?'} ON ${p.left_on ?? '?'} = ${p.right_on ?? '?'}`;
     case ACTION_TYPES.GROUP_BY:
       return `GROUP BY ${p.column ?? '?'}`;
+    case ACTION_TYPES.AGGREGATE:
+      return `${p.function ?? '?'}(${p.column ?? '?'})`;
     case ACTION_TYPES.ORDER_BY:
       return `ORDER BY ${p.column ?? '?'} ${p.direction ?? 'ASC'}`;
     case ACTION_TYPES.LIMIT:
@@ -297,6 +319,8 @@ export function actionSignature(actionType) {
           ? ORDER_DIRECTIONS
           : rule.kind === 'joinType'
             ? JOIN_TYPES
+            : rule.kind === 'aggregate'
+              ? AGGREGATE_FUNCTIONS
             : undefined,
   }));
 }

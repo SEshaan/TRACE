@@ -26,6 +26,8 @@ describe('toFlowNodes', () => {
     expect(filter.data.execution_time_ms).toBeTypeOf('number');
     expect(filter.data.confidence).toBe(1);
     expect(filter.data.branch_id).toBeTruthy();
+    expect(filter.data.displaySql).toBe('SELECT * FROM students\nWHERE gpa > 8.5');
+    expect(filter.data.preview.rows).toHaveLength(4);
   });
 
   it('marks the checkpointed node so the amber badge renders', () => {

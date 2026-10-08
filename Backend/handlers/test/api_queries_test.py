@@ -116,6 +116,8 @@ def test_api_full_query_workflow(client: TestClient):
     assert finish_data["row_count"] > 0
     assert len(finish_data["rows"]) == finish_data["row_count"]
     assert finish_data["total_actions"] is not None
+    assert finish_data["sql"] == "SELECT * FROM students\nWHERE gpa < 8.5"
+    assert finish_data["execution_sql"] == 'SELECT * FROM "students"\nWHERE "gpa" < ?'
 
     # 7. Get Trace
     trace_resp = client.get(f"/queries/{session_id}/trace")
@@ -123,6 +125,44 @@ def test_api_full_query_workflow(client: TestClient):
     trace_data = trace_resp.json()
     assert len(trace_data["checkpoints"]) == 1
     assert len(trace_data["states"]) >= 3
+    filtered_state = next(
+        state for state in trace_data["states"]
+        if state["sql"] and '"gpa" < ?' in state["sql"]
+    )
+    assert filtered_state["display_sql"] == "SELECT * FROM students\nWHERE gpa < 8.5"
+
+
+def test_api_aggregate_action(client: TestClient):
+    create_resp = client.post("/queries", json={"request": "Sum student GPAs"})
+    assert create_resp.status_code == 201
+    session_id = create_resp.json()["id"]
+
+    table_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={"action_type": "SELECT_TABLE", "parameters": {"table": "students"}},
+    )
+    assert table_resp.status_code == 200
+    assert table_resp.json()["success"] is True
+
+    aggregate_resp = client.post(
+        f"/queries/{session_id}/actions",
+        json={
+            "action_type": "AGGREGATE",
+            "parameters": {
+                "function": "SUM",
+                "column": "gpa",
+                "alias": "total_gpa",
+            },
+        },
+    )
+    assert aggregate_resp.status_code == 200
+    aggregate_data = aggregate_resp.json()
+    assert aggregate_data["success"] is True
+    assert aggregate_data["state"]["preview"]["columns"] == ["total_gpa"]
+
+    finish_resp = client.post(f"/queries/{session_id}/finish")
+    assert finish_resp.status_code == 200
+    assert finish_resp.json()["rows"][0]["total_gpa"] == pytest.approx(68.1)
 
 
 def test_api_step_endpoint(client: TestClient):
@@ -264,4 +304,3 @@ def test_api_insufficient_info_requires_reason(client: TestClient):
         json={"action_type": "INSUFFICIENT_INFO", "parameters": {}},
     )
     assert resp.status_code == 422
-

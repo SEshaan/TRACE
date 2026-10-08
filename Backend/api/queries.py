@@ -14,6 +14,8 @@ from handlers.query_handler import (
     QueryStatus,
     QueryTrace,
 )
+from handlers.compiler import SQLiteCompiler
+from handlers.sql_display import format_sql_for_display
 from pydantic import BaseModel, Field
 
 router = APIRouter(
@@ -186,6 +188,7 @@ class QueryStateResponse(BaseModel):
     status: QueryStatus
     action_count: int
     sql: str | None
+    display_sql: str | None = None
     preview: dict[str, Any] | None = None
     action: dict[str, Any] | None = None
     decision: dict[str, Any] | None = None
@@ -210,7 +213,12 @@ class QueryStateResponse(BaseModel):
 
         action_data = None
         decision_data = None
+        display_sql = None
         if state.actions:
+            if state.sql is not None:
+                compiled_sql, parameters = SQLiteCompiler().compile(state=state)
+                display_sql = format_sql_for_display(compiled_sql, parameters)
+
             last_action = state.actions[-1]
             action_data = serialize_action(last_action)
             conf = getattr(last_action, "confidence", None)
@@ -225,6 +233,7 @@ class QueryStateResponse(BaseModel):
             status=state.status,
             action_count=len(state.actions),
             sql=state.sql,
+            display_sql=display_sql,
             preview=preview,
             action=action_data,
             decision=decision_data,
@@ -305,6 +314,7 @@ class SchemaResponse(BaseModel):
 class QueryResultResponse(BaseModel):
     state: QueryStateResponse
     sql: str
+    execution_sql: str
     columns: list[str]
     rows: list[dict[str, Any]]
     row_count: int
@@ -322,7 +332,8 @@ class QueryResultResponse(BaseModel):
             state=QueryStateResponse.from_state(
                 result.state,
             ),
-            sql=result.sql,
+            sql=result.display_sql,
+            execution_sql=result.sql,
             columns=list(result.columns),
             rows=list(result.rows),
             row_count=result.row_count,
@@ -387,6 +398,7 @@ def build_action(
 
     from handlers.actions import (
         AbortQueryAction,
+        AggregateAction,
         FilterAction,
         FinishAction,
         GroupByAction,
@@ -439,6 +451,19 @@ def build_action(
         if "column" not in p:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="column parameter required")
         return GroupByAction(column=p["column"], table=p.get("table"))
+
+    elif atype == "AGGREGATE":
+        if "function" not in p or "column" not in p:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="function and column parameters required",
+            )
+        return AggregateAction(
+            function=p["function"],
+            column=p["column"],
+            table=p.get("table"),
+            alias=p.get("alias"),
+        )
 
     elif atype == "ORDER_BY":
         if "column" not in p:

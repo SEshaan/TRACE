@@ -14,6 +14,7 @@ export const ACTION_TYPES = {
   FILTER: 'FILTER',
   JOIN: 'JOIN',
   GROUP_BY: 'GROUP_BY',
+  AGGREGATE: 'AGGREGATE',
   ORDER_BY: 'ORDER_BY',
   LIMIT: 'LIMIT',
   FINISH: 'FINISH',
@@ -51,6 +52,7 @@ export const OPERATORS = Object.freeze([
 export const JOIN_TYPES = Object.freeze(['INNER', 'LEFT', 'RIGHT']);
 
 export const ORDER_DIRECTIONS = Object.freeze(['ASC', 'DESC']);
+export const AGGREGATE_FUNCTIONS = Object.freeze(['COUNT', 'SUM', 'AVG', 'MIN', 'MAX']);
 
 export const QUERY_STATUS = {
   NEW: 'new',
@@ -117,6 +119,12 @@ export const ACTION_SPECS = Object.freeze({
   GROUP_BY: {
     column: { kind: 'column', required: true },
     table: { kind: 'table' },
+  },
+  AGGREGATE: {
+    function: { kind: 'aggregate', required: true },
+    column: { kind: 'column', required: true },
+    table: { kind: 'table' },
+    alias: { kind: 'string' },
   },
   ORDER_BY: {
     column: { kind: 'column', required: true },

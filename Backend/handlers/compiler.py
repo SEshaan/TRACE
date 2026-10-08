@@ -19,6 +19,7 @@ class SQLiteCompiler(SQLCompiler):
 
         base_table: str | None = None
         columns: list[str] = []
+        aggregates: list[str] = []
         joins: list[tuple[str, str, str, str]] = []  # (join_type, table, left_on, right_on)
         filters: list[tuple[str, str, Any, str | None]] = []  # (col, op, val, table)
         group_by: list[str] = []
@@ -63,6 +64,23 @@ class SQLiteCompiler(SQLCompiler):
                 col_ref = f"{self._quote_id(tbl)}.{self._quote_id(col)}" if tbl else self._quote_id(col)
                 group_by.append(col_ref)
 
+            elif atype == "AGGREGATE":
+                function = getattr(action, "function").upper()
+                if function not in {"COUNT", "SUM", "AVG", "MIN", "MAX"}:
+                    raise ValueError(f"Unsupported aggregate function: {function}")
+                col = getattr(action, "column")
+                tbl = getattr(action, "table", None)
+                col_ref = (
+                    f"{self._quote_id(tbl)}.{self._quote_id(col)}"
+                    if tbl and col != "*"
+                    else self._quote_id(col)
+                )
+                expression = f"{function}({col_ref})"
+                alias = getattr(action, "alias", None)
+                if alias:
+                    expression += f" AS {self._quote_id(alias)}"
+                aggregates.append(expression)
+
             elif atype == "ORDER_BY":
                 order_by.append((
                     getattr(action, "column"),
@@ -80,7 +98,8 @@ class SQLiteCompiler(SQLCompiler):
             raise ValueError("Cannot compile query without a SELECT_TABLE action.")
 
         # SELECT clause
-        select_clause = ", ".join(columns) if columns else "*"
+        select_items = [*columns, *aggregates]
+        select_clause = ", ".join(select_items) if select_items else "*"
 
         # FROM clause
         from_clause = self._quote_id(base_table)

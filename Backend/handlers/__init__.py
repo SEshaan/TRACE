@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from handlers.actions import (
     AbortQueryAction,
+    AggregateAction,
     ActionUnion,
     FilterAction,
     FinishAction,
@@ -74,6 +75,7 @@ __all__ = [
     "FilterAction",
     "JoinAction",
     "GroupByAction",
+    "AggregateAction",
     "OrderByAction",
     "LimitAction",
     "FinishAction",

@@ -166,6 +166,7 @@ export function buildGraph(trace) {
       label: action?.type ? describeAction(action.type, action.params ?? {}) : null,
 
       sql: state.sql ?? null,
+      displaySql: state.displaySql ?? null,
       preview: state.preview ?? null,
       actionCount: state.actionCount ?? 0,
 

@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Any, Protocol, Sequence
 from uuid import uuid4
 
+from handlers.sql_display import format_sql_for_display
+
 # ============================================================================
 # Query lifecycle
 # ============================================================================
@@ -32,6 +34,7 @@ class QueryAction(Protocol):
         FilterAction
         JoinAction
         GroupByAction
+        AggregateAction
         OrderByAction
         LimitAction
         FinishAction
@@ -170,6 +173,8 @@ class QueryResult:
     state: QueryState
 
     sql: str
+
+    display_sql: str
 
     columns: tuple[str, ...]
 
@@ -843,7 +848,7 @@ class QueryHandler:
 
             self.trace_store.save_failure(
                 session_id=session_id,
-                state_id=next_state.id,
+                state_id=current_state.id,
                 action=action,
                 failure=failure,
             )
@@ -879,7 +884,7 @@ class QueryHandler:
 
             self.trace_store.save_failure(
                 session_id=session_id,
-                state_id=next_state.id,
+                state_id=current_state.id,
                 action=action,
                 failure=failure,
             )
@@ -1022,20 +1027,18 @@ class QueryHandler:
             checkpoint.state_id,
         )
 
-        # Create an explicit branch state.
-
-        branch_state = self.state_engine.branch(
-            state=checkpoint_state,
-        )
-
-        self.trace_store.save_state(
-            session_id,
-            branch_state,
-        )
-
+        # Recompute from the checkpoint by attaching the correction directly to
+        # the checkpoint state. We deliberately do NOT create a duplicate copy
+        # of the checkpoint node first: that would render as an extra "A -> A"
+        # step in the graph. Instead the recovered branch hangs straight off
+        # the checkpoint, so the fork reads cleanly:
+        #
+        #     A(checkpoint) --> B   (recovered)
+        #     A(checkpoint) --> bad (abandoned)
+        #
         self.trace_store.update_session(
             session_id,
-            current_state_id=branch_state.id,
+            current_state_id=checkpoint_state.id,
             status=QueryStatus.ACTIVE,
         )
 
@@ -1130,6 +1133,7 @@ class QueryHandler:
         return QueryResult(
             state=completed_state,
             sql=sql,
+            display_sql=format_sql_for_display(sql, parameters),
             columns=execution.columns,
             rows=execution.rows,
             row_count=execution.row_count,

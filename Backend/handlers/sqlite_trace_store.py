@@ -8,6 +8,7 @@ from typing import Any, Sequence
 
 from handlers.actions import (
     AbortQueryAction,
+    AggregateAction,
     FilterAction,
     FinishAction,
     GroupByAction,
@@ -470,6 +471,14 @@ class SQLiteTraceStore(TraceStore):
             return JoinAction(table=params["table"], left_on=params["left_on"], right_on=params["right_on"], join_type=params.get("join_type", "INNER"), confidence=conf)
         elif atype == "GROUP_BY":
             return GroupByAction(column=params["column"], table=params.get("table"), confidence=conf)
+        elif atype == "AGGREGATE":
+            return AggregateAction(
+                function=params["function"],
+                column=params["column"],
+                table=params.get("table"),
+                alias=params.get("alias"),
+                confidence=conf,
+            )
         elif atype == "ORDER_BY":
             return OrderByAction(column=params["column"], direction=params.get("direction", "ASC"), table=params.get("table"), confidence=conf)
         elif atype == "LIMIT":

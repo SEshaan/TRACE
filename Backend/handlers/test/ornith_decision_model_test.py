@@ -16,6 +16,7 @@ if str(_TEST_DIR.parent) not in sys.path:
 from Backend.db_adapters.schema import ColumnSchema, TableSchema
 from Backend.handlers import (
     AbortQueryAction,
+    AggregateAction,
     FinishAction,
     InsufficientInfoAction,
     SchemaMissingAction,
@@ -62,12 +63,20 @@ class _FakeAgent:
         self._reason = reason
         self._clarification = clarification
         self._table = table
+        self.calls = []
 
     def predict(self, state=None, questions=None):
-        key = "table" if self._choice == "abort_query" else "operation"
-        return {"answers": {key: {"choice": self._choice, "answer_confidence": 0.9}}}
+        self.calls.append(questions)
+        return {
+            "answers": {
+                key: {"choice": self._choice, "answer_confidence": 0.9}
+                for key in questions
+            }
+        }
 
     def _complete(self, prompt):
+        if prompt.startswith("Given the user goal:"):
+            return "{}"
         payload = {"reason": self._reason}
         if self._clarification is not None:
             payload["clarification"] = self._clarification
@@ -77,6 +86,18 @@ class _FakeAgent:
 
     def _parse_json(self, text):
         return json.loads(text)
+
+
+class _AggregateFakeAgent(_FakeAgent):
+    def predict(self, state=None, questions=None):
+        self.calls.append(questions)
+        if "operation" in questions:
+            answers = {"operation": {"choice": "aggregate", "answer_confidence": 0.95}}
+        elif "function" in questions:
+            answers = {"function": {"choice": "SUM", "answer_confidence": 0.9}}
+        else:
+            answers = {"column": {"choice": "gpa", "answer_confidence": 0.85}}
+        return {"answers": answers}
 
 
 def _root_state():
@@ -108,6 +129,28 @@ def test_decide_offers_abort_query_at_root_and_emits_it():
     assert isinstance(action, AbortQueryAction)
     assert action.reason == "references a nonexistent entity"
     assert action.confidence == 0.9
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected_type"),
+    [
+        ("insufficient_info", InsufficientInfoAction),
+        ("schema_missing", SchemaMissingAction),
+    ],
+)
+def test_root_table_choice_always_offers_graceful_fails(choice, expected_type):
+    agent = _FakeAgent(choice=choice, reason="cannot infer the requested value")
+    model = OrnithDecisionModel(agent=agent)
+
+    action = model.decide(
+        request="Find students with high GPA",
+        state=_root_state(),
+        environment=_SCHEMA,
+    )
+
+    assert isinstance(action, expected_type)
+    table_question = agent.calls[0]["table"]
+    assert {"insufficient_info", "schema_missing", "abort_query"} <= set(table_question["criteria"])
 
 
 def test_decide_emits_insufficient_info_with_clarification():
@@ -159,6 +202,44 @@ def test_decide_still_finishes_when_no_fail_choice_selected():
     )
 
     assert isinstance(action, FinishAction)  # post-root + finish choice -> terminal
+    operation_question = agent.calls[0]["operation"]
+    assert {"insufficient_info", "schema_missing", "abort_query"} <= set(
+        operation_question["criteria"]
+    )
+
+
+def test_filter_choice_offers_graceful_fails_and_does_not_guess_missing_value():
+    agent = _FakeAgent(choice="filter")
+    model = OrnithDecisionModel(agent=agent)
+
+    action = model.decide(
+        request="Find students with high GPA",
+        state=_post_root_state(),
+        environment=_SCHEMA,
+    )
+
+    assert isinstance(action, InsufficientInfoAction)
+    assert len(agent.calls) == 2
+    filter_questions = agent.calls[1]
+    for question in filter_questions.values():
+        assert {"insufficient_info", "schema_missing", "abort_query"} <= set(question["criteria"])
+
+
+def test_decide_creates_aggregate_action_when_requested():
+    agent = _AggregateFakeAgent(choice="aggregate")
+    model = OrnithDecisionModel(agent=agent)
+
+    action = model.decide(
+        request="Calculate the average GPA",
+        state=_post_root_state(),
+        environment=_SCHEMA,
+    )
+
+    assert isinstance(action, AggregateAction)
+    assert action.function == "SUM"
+    assert action.column == "gpa"
+    assert action.confidence == 0.85
+    assert "aggregate" in agent.calls[0]["operation"]["criteria"]
 
 
 def test_summarize_schema_lists_tables_and_foreign_keys():

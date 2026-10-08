@@ -90,6 +90,27 @@ describe('buildActionPayload', () => {
     );
   });
 
+  it('builds aggregate actions and validates aggregate functions', () => {
+    expect(buildActionPayload('AGGREGATE', {
+      function: 'sum',
+      column: 'gpa',
+      alias: 'total_gpa',
+    })).toEqual({
+      action_type: 'AGGREGATE',
+      parameters: { function: 'SUM', column: 'gpa', alias: 'total_gpa' },
+    });
+    expect(() => buildActionPayload('AGGREGATE', {
+      function: 'MEDIAN',
+      column: 'gpa',
+    })).toThrowError(/COUNT, SUM, AVG, MIN, MAX/);
+    expect(preflightValidate('AGGREGATE', { function: 'SUM', column: '*' }, {
+      schemaKnown: false,
+      activeTables: ['students'],
+    }).ok).toBe(false);
+    expect(actionSignature('AGGREGATE').find((field) => field.name === 'function').options)
+      .toEqual(['COUNT', 'SUM', 'AVG', 'MIN', 'MAX']);
+  });
+
   it('normalizes operator casing and validates the enum', () => {
     expect(buildActionPayload('FILTER', { column: 'gpa', operator: '>', value: 1 }).parameters.operator).toBe('>');
     expect(() => buildActionPayload('FILTER', { column: 'gpa', operator: '>>', value: 1 })).toThrowError();
@@ -157,6 +178,7 @@ describe('describeAction / actionSignature', () => {
     expect(describeAction('FILTER', { column: 'gpa', operator: '>', value: 8.5 })).toBe('WHERE gpa > 8.5');
     expect(describeAction('SELECT_TABLE', { table: 'students' })).toBe('FROM students');
     expect(describeAction('LIMIT', { limit: 10 })).toBe('LIMIT 10');
+    expect(describeAction('AGGREGATE', { function: 'COUNT', column: '*' })).toBe('COUNT(*)');
   });
 
   it('exposes field descriptors for forms', () => {

@@ -27,6 +27,7 @@ class DeterministicValidator(Validator):
     }
     ALLOWED_JOIN_TYPES = {"INNER", "LEFT", "RIGHT"}
     ALLOWED_ORDER_DIRECTIONS = {"ASC", "DESC"}
+    ALLOWED_AGGREGATES = {"COUNT", "SUM", "AVG", "MIN", "MAX"}
 
     def validate(
         self,
@@ -50,6 +51,8 @@ class DeterministicValidator(Validator):
             self._validate_join(action, state, environment)
         elif action_type == "GROUP_BY":
             self._validate_group_by(action, state, environment)
+        elif action_type == "AGGREGATE":
+            self._validate_aggregate(action, state, environment)
         elif action_type == "ORDER_BY":
             self._validate_order_by(action, state, environment)
         elif action_type == "LIMIT":
@@ -160,6 +163,25 @@ class DeterministicValidator(Validator):
         table = getattr(action, "table", None)
         if not self._resolve_column(col, table, active, schema):
             raise ValueError(f"Column '{col}' not found in active tables: {active}.")
+
+    def _validate_aggregate(self, action: Any, state: QueryState, schema: Any) -> None:
+        active = self._get_active_tables(state)
+        if not active:
+            raise ValueError("Cannot aggregate before selecting a table.")
+        function = getattr(action, "function", None)
+        if not function or str(function).upper() not in self.ALLOWED_AGGREGATES:
+            raise ValueError(
+                f"Invalid aggregate function '{function}'. "
+                f"Allowed: {sorted(self.ALLOWED_AGGREGATES)}"
+            )
+        column = getattr(action, "column", None)
+        if not column:
+            raise ValueError("AGGREGATE requires a column name.")
+        if column == "*" and str(function).upper() != "COUNT":
+            raise ValueError("Only COUNT can aggregate '*'.")
+        table = getattr(action, "table", None)
+        if not self._resolve_column(column, table, active, schema):
+            raise ValueError(f"Column '{column}' not found in active tables: {active}.")
 
     def _validate_order_by(self, action: Any, state: QueryState, schema: Any) -> None:
         active = self._get_active_tables(state)

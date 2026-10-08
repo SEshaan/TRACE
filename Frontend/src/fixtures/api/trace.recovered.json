@@ -80,6 +80,7 @@
       "status": "active",
       "action_count": 3,
       "sql": "SELECT * FROM \"students\"\nWHERE \"gpa\" > ?",
+      "display_sql": "SELECT * FROM students\nWHERE gpa > 8.5",
       "preview": {
         "columns": ["id", "name", "gpa", "department_id"],
         "rows": [
