@@ -86,7 +86,7 @@ class AgentController(DecisionModel):
 
 def create_agent_controller() -> AgentController:
     """Factory helper using environment variables."""
-    agent_type = os.environ.get("DECISION_AGENT", "ornith")
+    agent_type = os.environ.get("DECISION_AGENT", "rule")
     base_url = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
     model_name = os.environ.get("DECISION_MODEL_NAME", "ornith-1.5")
     return AgentController(

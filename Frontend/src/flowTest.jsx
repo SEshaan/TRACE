@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -12,6 +13,12 @@ const nodeTypes = {
   trace: QueryActionNode,
 };
 
+const FIT_VIEW_OPTIONS = {
+  padding: 0.2,
+  minZoom: 0.1,
+  maxZoom: 1,
+};
+
 /**
  * Presentational canvas only. Nodes and edges arrive from the store
  * (backend trace -> lib/traceGraph -> lib/flowMapping); this component owns
@@ -24,20 +31,35 @@ export default function FlowTest({
   onNodesChange,
   onEdgesChange,
 }) {
+  const reactFlowInstance = useRef(null);
+
+  useEffect(() => {
+    if (!reactFlowInstance.current) return undefined;
+
+    const frame = requestAnimationFrame(() => {
+      reactFlowInstance.current?.fitView(FIT_VIEW_OPTIONS);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [nodes, edges]);
+
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        nodesDraggable={true}
+        nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={true}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={(_, node) => onSelectNode?.(node.data)}
+        onInit={(instance) => {
+          reactFlowInstance.current = instance;
+        }}
         fitView
-        fitViewOptions={{ padding: 0.15 }}
+        fitViewOptions={FIT_VIEW_OPTIONS}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={16} size={1} color="#e5e7eb" />
