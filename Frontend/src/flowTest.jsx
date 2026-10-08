@@ -4,6 +4,7 @@ import {
   Background,
   Controls,
 } from "@xyflow/react";
+
 import "@xyflow/react/dist/style.css";
 
 import QueryActionNode from "./QueryActionNode";
@@ -20,9 +21,12 @@ const FIT_VIEW_OPTIONS = {
 };
 
 /**
- * Presentational canvas only. Nodes and edges arrive from the store
- * (backend trace -> lib/traceGraph -> lib/flowMapping); this component owns
- * no data and has no mock fallback.
+ * Presentational canvas only.
+ *
+ * Nodes and edges arrive from the store:
+ * backend trace -> lib/traceGraph -> lib/flowMapping
+ *
+ * This component owns no data and has no mock fallback.
  */
 export default function FlowTest({
   nodes = [],
@@ -44,7 +48,19 @@ export default function FlowTest({
   }, [nodes, edges]);
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+
+        /* subtle tree-window treatment */
+        background: "#ffffff",
+        border: "2px solid #d9d9dd",
+        borderRadius: "10px",
+        overflow: "hidden",
+        boxSizing: "border-box",
+      }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -61,8 +77,16 @@ export default function FlowTest({
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
         proOptions={{ hideAttribution: true }}
+        style={{
+          background: "#ffffff",
+        }}
       >
-        <Background gap={16} size={1} color="#e5e7eb" />
+        <Background
+          gap={16}
+          size={1}
+          color="#e5e7eb"
+        />
+
         <Controls />
       </ReactFlow>
     </div>

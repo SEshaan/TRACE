@@ -2446,11 +2446,10 @@ function App() {
 
           p: '4',
 
-          bg: '#f5f5f7',
+          bg: '#dededf',
 
-          borderTopWidth: '1px',
-
-          borderColor: '#e4e4e7',
+border: '1px solid #b0b0b0',
+borderRadius: '10px 10px 0 0',
 
           display: 'flex',
 
