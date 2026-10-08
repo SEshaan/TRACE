@@ -10,9 +10,21 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Bookmark,
   Zap,
 } from 'lucide-react'
+
+/**
+ * Configuration for the START node (the root state carries no action).
+ */
+const START_CONFIG = {
+  label: 'START',
+  Icon: Database,
+  badgeBg: 'teal.50',
+  badgeColor: 'teal.700',
+  badgeBorder: 'teal.200',
+}
 
 /**
  * Returns configuration (label, icon, badge color) based on action type.
@@ -116,12 +128,22 @@ function formatActionParams(params) {
 }
 
 function QueryActionNode({ data, selected }) {
-  const actionName = data.action || data.action_type || 'ACTION'
-  const actionConfig = getActionConfig(actionName)
+  // The root state carries no action type; render it as a distinct START card.
+  const isStart = !data.action && !data.action_type
+  const actionConfig = isStart ? START_CONFIG : getActionConfig(data.action || data.action_type || 'ACTION')
   const ActionIcon = actionConfig.Icon
 
   const rawStatus = (data.status || 'SUCCESS').toUpperCase()
-  const isFailed = rawStatus === 'FAILED'
+
+  // Graceful declines (INSUFFICIENT_INFO / SCHEMA_MISSING / ABORT_QUERY) arrive
+  // with status='failed' but carry NO failure object — the reason lives in the
+  // action params. Distinguish them from hard validation/SQL failures so they
+  // render as amber "declined" nodes, never red.
+  const DECLINE_TYPES = ['INSUFFICIENT_INFO', 'SCHEMA_MISSING', 'ABORT_QUERY']
+  const isDeclined = Boolean(data.action) && DECLINE_TYPES.includes(String(data.action))
+  const declineReason = data.params?.reason ?? data.parameters?.reason ?? null
+
+  const isFailed = rawStatus === 'FAILED' && !isDeclined
   const isCompleted = rawStatus === 'SUCCESS' || rawStatus === 'COMPLETED'
   const isActive = rawStatus === 'ACTIVE' || rawStatus === 'NEW'
   const isInactive = data.isActiveBranch === false || data.is_active_branch === false
@@ -134,13 +156,21 @@ function QueryActionNode({ data, selected }) {
   )
 
   // Visual status border determination according to spec:
-  // Green for success, Red for validation/SQL failure, Amber/Blue for checkpoints/recovery branches.
+  // Green for success, Amber for graceful declines/checkpoints, Red for
+  // validation/SQL failure, Blue for recovery branches.
   let borderColor = '#22c55e' // Green (success default)
   let statusBadgeBg = 'green.50'
   let statusBadgeColor = 'green.700'
   let statusBadgeText = isCompleted ? 'Completed' : rawStatus
+  let borderStyle = 'solid'
 
-  if (isFailed) {
+  if (isDeclined) {
+    borderColor = '#f59e0b' // Amber (graceful decline)
+    statusBadgeBg = 'amber.50'
+    statusBadgeColor = 'amber.800'
+    statusBadgeText = 'Declined'
+    borderStyle = 'dashed'
+  } else if (isFailed) {
     borderColor = '#ef4444' // Red (failure)
     statusBadgeBg = 'red.50'
     statusBadgeColor = 'red.700'
@@ -157,11 +187,15 @@ function QueryActionNode({ data, selected }) {
   }
 
   if (isInactive && !selected) {
-    borderColor = isFailed ? '#f87171' : '#9ca3af'
+    borderColor = isDeclined ? '#fbbf24' : isFailed ? '#f87171' : '#9ca3af'
+    borderStyle = 'dashed'
   }
 
-  // Parameter string
-  const paramDisplay = formatActionParams(data.params ?? data.parameters)
+  // Parameter string. The start node shows the original request instead of an
+  // empty params box.
+  const paramDisplay = isStart
+    ? (data.request?.trim() || '—')
+    : formatActionParams(data.params ?? data.parameters)
 
   // Confidence %
   const rawConfidence = data.confidence
@@ -188,13 +222,15 @@ function QueryActionNode({ data, selected }) {
         borderRadius: '10px',
         background: isInactive ? '#fafafa' : 'white',
         borderWidth: '2px',
-        borderStyle: isInactive ? 'dashed' : 'solid',
+        borderStyle: borderStyle,
         borderColor: borderColor,
         boxShadow: selected
           ? '0 0 0 3px #3b82f6, 0 8px 16px -2px rgba(59, 130, 246, 0.2)'
-          : isFailed
-            ? '0 2px 8px rgba(239, 68, 68, 0.15)'
-            : '0 2px 8px rgba(0, 0, 0, 0.06)',
+          : isDeclined
+            ? '0 2px 8px rgba(245, 158, 11, 0.18)'
+            : isFailed
+              ? '0 2px 8px rgba(239, 68, 68, 0.15)'
+              : '0 2px 8px rgba(0, 0, 0, 0.06)',
         opacity: isInactive ? 0.72 : 1,
         transition: 'all 0.15s ease',
         cursor: 'pointer',
@@ -300,7 +336,9 @@ function QueryActionNode({ data, selected }) {
             fontWeight: '600',
           })}
         >
-          {isFailed ? (
+          {isDeclined ? (
+            <AlertTriangle size={10} />
+          ) : isFailed ? (
             <AlertCircle size={10} />
           ) : isCompleted ? (
             <CheckCircle2 size={10} />
@@ -338,6 +376,34 @@ function QueryActionNode({ data, selected }) {
       >
         {paramDisplay}
       </div>
+
+      {/* Decline Reason Callout — graceful agent decline (amber) */}
+      {isDeclined && declineReason && (
+        <div
+          title={declineReason}
+          className={css({
+            padding: '4px 6px',
+            borderRadius: '4px',
+            bg: 'amber.50',
+            border: '1px solid',
+            borderColor: 'amber.200',
+            color: 'amber.800',
+            fontSize: '10px',
+            fontWeight: '500',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          })}
+        >
+          <AlertTriangle size={11} className={css({ flexShrink: 0 })} />
+          <span className={css({ overflow: 'hidden', textOverflow: 'ellipsis' })}>
+            {declineReason}
+          </span>
+        </div>
+      )}
 
       {/* Failure Reason Callout */}
       {isFailed && data.failure_reason && (

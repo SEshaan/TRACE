@@ -21,7 +21,7 @@ import * as api from '../api/client';
 import { API_ERROR, ApiError } from '../api/errors';
 import { buildGraph } from '../lib/traceGraph';
 import { schemaFromTrace, setSchema, loadSchema } from '../lib/schema';
-import { DEMO_FAILURE_ACTION, MAX_RUN_STEPS, STEP_DELAY_MS } from '../constants/backend';
+import { DEMO_FAILURE_ACTION, FAIL_STATE_ACTION_TYPES, MAX_RUN_STEPS, STEP_DELAY_MS } from '../constants/backend';
 
 /* -------------------------------------------------------------- state ---- */
 
@@ -388,6 +388,13 @@ function finishRun(err) {
   }
 }
 
+/** Pull the human-readable decline reason out of a fail-action result. */
+function extractDeclineReason(result, decision) {
+  const params = decision?.parameters ?? result?.state?.action?.parameters;
+  const reason = typeof params?.reason === 'string' ? params.reason.trim() : '';
+  return reason || null;
+}
+
 async function runLoop({ maxSteps, stepDelayMs, single = false }) {
   const controller = state.run.controller;
   if (!controller) return;
@@ -435,6 +442,23 @@ async function runLoop({ maxSteps, stepDelayMs, single = false }) {
             detail: result.failure,
           }),
         );
+        return;
+      }
+
+      // Graceful decline: the agent chose to stop rather than build further.
+      // Terminal like failure/FINISH, but surfaced distinctly so the UI renders
+      // an amber "declined" message/node instead of a red error. Soft fails are
+      // still recoverable by branching from an earlier checkpoint (see 7.3).
+      if (FAIL_STATE_ACTION_TYPES.includes(decision?.action_type)) {
+        setError(
+          new ApiError(extractDeclineReason(result, decision) || `${decision.action_type} — the agent declined to proceed.`, {
+            code: API_ERROR.BAD_REQUEST,
+            detail: result.state ?? null,
+          }),
+        );
+        patch('session', (prev) => ({ ...prev, status: 'failed' }));
+        patch('run', (prev) => ({ ...prev, phase: 'declined', controller: null }));
+        await refreshTrace(sessionId, { silent: true });
         return;
       }
 

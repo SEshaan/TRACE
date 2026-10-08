@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -11,6 +12,12 @@ import QueryActionNode from "./QueryActionNode";
 const nodeTypes = {
   queryAction: QueryActionNode,
   trace: QueryActionNode,
+};
+
+const FIT_VIEW_OPTIONS = {
+  padding: 0.2,
+  minZoom: 0.1,
+  maxZoom: 1,
 };
 
 /**
@@ -28,6 +35,18 @@ export default function FlowTest({
   onNodesChange,
   onEdgesChange,
 }) {
+  const reactFlowInstance = useRef(null);
+
+  useEffect(() => {
+    if (!reactFlowInstance.current) return undefined;
+
+    const frame = requestAnimationFrame(() => {
+      reactFlowInstance.current?.fitView(FIT_VIEW_OPTIONS);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [nodes, edges]);
+
   return (
     <div
       style={{
@@ -46,21 +65,18 @@ export default function FlowTest({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        nodesDraggable={true}
+        nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={true}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeClick={(_, node) =>
-          onSelectNode?.(node.data)
-        }
+        onNodeClick={(_, node) => onSelectNode?.(node.data)}
+        onInit={(instance) => {
+          reactFlowInstance.current = instance;
+        }}
         fitView
-        fitViewOptions={{
-          padding: 0.15,
-        }}
-        proOptions={{
-          hideAttribution: true,
-        }}
+        fitViewOptions={FIT_VIEW_OPTIONS}
+        proOptions={{ hideAttribution: true }}
         style={{
           background: "#ffffff",
         }}

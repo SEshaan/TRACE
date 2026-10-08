@@ -148,7 +148,7 @@ function App() {
 
   const status = run.isFinished
     ? 'completed'
-    : run.isFailed || run.isAborted
+    : run.isFailed || run.isAborted || run.isDeclined
       ? 'failed'
       : 'ready'
 
@@ -1002,6 +1002,26 @@ function App() {
 
                   Completed
                 </span>
+              ) : run.isDeclined ? (
+                <span
+                  className={css({
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '1.5',
+                    px: '2.5',
+                    py: '1',
+                    borderRadius: 'full',
+                    bg: 'amber.50',
+                    color: 'amber.800',
+                    fontSize: 'xs',
+                    fontWeight: 'semibold',
+                    border: '1px solid',
+                    borderColor: 'amber.200',
+                  })}
+                >
+                  <AlertTriangle size={12} />
+                  Declined
+                </span>
               ) : status === 'failed' ? (
                 <span
                   className={css({
@@ -1267,7 +1287,12 @@ function App() {
             <div
               className={css({
                 p: '2',
-
+                borderRadius: 'md',
+                bg: run.isDeclined ? 'amber.50' : 'red.50',
+                border: '1px solid',
+                borderColor: run.isDeclined ? 'amber.200' : 'red.200',
+                color: run.isDeclined ? 'amber.800' : 'red.700',
+                fontSize: 'xs',
                 display: 'flex',
 
                 alignItems: 'center',

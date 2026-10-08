@@ -492,5 +492,5 @@ class SQLiteTraceStore(TraceStore):
                 confidence=conf,
             )
         elif atype == "ABORT_QUERY":
-            return AbortQueryAction(confidence=conf)
+            return AbortQueryAction(reason=params.get("reason", ""), confidence=conf)
         raise ValueError(f"Unknown action type: {action_type}")

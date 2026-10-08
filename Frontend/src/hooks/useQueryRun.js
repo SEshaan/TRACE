@@ -25,9 +25,22 @@ export function useQueryRun({ mode = 'auto', maxSteps, stepDelayMs } = {}) {
     isFinished: run.phase === 'finished',
     isFailed: run.phase === 'failed',
     isAborted: run.phase === 'aborted',
-    isSettled: run.phase === 'finished' || run.phase === 'failed' || run.phase === 'aborted' || run.phase === 'idle',
+    // A graceful agent decline (INSUFFICIENT_INFO / SCHEMA_MISSING / ABORT_QUERY)
+    // is terminal for this branch but distinct from a hard failure.
+    isDeclined: run.phase === 'declined',
+    isSettled:
+      run.phase === 'finished' ||
+      run.phase === 'failed' ||
+      run.phase === 'aborted' ||
+      run.phase === 'declined' ||
+      run.phase === 'idle',
 
-    canStart: run.phase === 'idle' || run.phase === 'finished' || run.phase === 'failed' || run.phase === 'aborted',
+    canStart:
+      run.phase === 'idle' ||
+      run.phase === 'finished' ||
+      run.phase === 'failed' ||
+      run.phase === 'aborted' ||
+      run.phase === 'declined',
     canPause: run.phase === 'running',
     canResume: run.phase === 'paused',
     canStep: run.phase === 'paused',

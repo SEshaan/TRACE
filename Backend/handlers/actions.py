@@ -155,6 +155,7 @@ class AbortQueryAction:
     first state and there is nothing left to try.
     """
 
+    reason: str = ""
     action_type: str = "ABORT_QUERY"
     confidence: float = 1.0
 

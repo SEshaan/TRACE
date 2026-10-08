@@ -17,9 +17,23 @@ export const ACTION_TYPES = {
   ORDER_BY: 'ORDER_BY',
   LIMIT: 'LIMIT',
   FINISH: 'FINISH',
+  // Graceful-fail actions: the agent declines to proceed instead of guessing.
+  INSUFFICIENT_INFO: 'INSUFFICIENT_INFO',
+  SCHEMA_MISSING: 'SCHEMA_MISSING',
+  ABORT_QUERY: 'ABORT_QUERY',
 };
 
 export const ACTION_TYPE_LIST = Object.freeze(Object.values(ACTION_TYPES));
+
+/**
+ * Agent actions that mean "I cannot build this query" rather than a step in
+ * building it. Rendered as amber dashed decline nodes, never as red failures.
+ */
+export const FAIL_STATE_ACTION_TYPES = Object.freeze([
+  ACTION_TYPES.INSUFFICIENT_INFO,
+  ACTION_TYPES.SCHEMA_MISSING,
+  ACTION_TYPES.ABORT_QUERY,
+]);
 
 export const OPERATORS = Object.freeze([
   '=',
@@ -113,6 +127,22 @@ export const ACTION_SPECS = Object.freeze({
     limit: { kind: 'number', required: true, min: 1 },
   },
   FINISH: {},
+  // Graceful-fail actions. `reason` is required so the decline always carries a
+  // human-readable why; the optional fields explain what we need / what's absent.
+  INSUFFICIENT_INFO: {
+    reason: { kind: 'string', required: true },
+    clarification: { kind: 'string' },
+    missing_fields: { kind: 'json' },
+  },
+  SCHEMA_MISSING: {
+    reason: { kind: 'string', required: true },
+    table: { kind: 'table' },
+    column: { kind: 'column' },
+    expected_relationship: { kind: 'string' },
+  },
+  ABORT_QUERY: {
+    reason: { kind: 'string' },
+  },
 });
 
 /** Actions that require a base table to already exist in the state. */

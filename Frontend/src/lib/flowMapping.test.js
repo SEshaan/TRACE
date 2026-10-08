@@ -69,6 +69,45 @@ describe('toFlowNodes', () => {
     expect(nodes.some((n) => n.data.failure_reason)).toBe(true);
   });
 
+  it('flags a graceful decline and surfaces its reason without inventing a failure', () => {
+    // A fail-action node: status=failed but NO failure object; the reason lives
+    // in the action params. toFlowNodes must surface both for QueryActionNode.
+    const nodes = toFlowNodes(
+      [
+        {
+          id: 'decl-1',
+          parentId: null,
+          depth: 0,
+          branchId: 'main',
+          position: { x: 0, y: 0 },
+          status: 'failed',
+          actionType: 'ABORT_QUERY',
+          params: { reason: 'No matching table.' },
+          confidence: null,
+          decision: null,
+          label: 'ABORT_QUERY',
+          sql: null,
+          preview: null,
+          actionCount: 1,
+          checkpoint: null,
+          failure: null,
+          failures: [],
+          isCurrent: false,
+          isTerminal: true,
+          onActivePath: true,
+          hasChildren: false,
+          raw: {},
+        },
+      ],
+      { edges: [] },
+    );
+    expect(nodes[0].data.isDeclined).toBe(true);
+    expect(nodes[0].data.action).toBe('ABORT_QUERY');
+    expect(nodes[0].data.failure_reason).toBe('No matching table.');
+    // the decline reason comes from params, not a failure object
+    expect(nodes[0].data.failure_code).toBeNull();
+  });
+
   it('is safe on empty input', () => {
     expect(toFlowNodes([], { edges: [] })).toEqual([]);
     expect(toFlowNodes(null, { edges: null })).toEqual([]);

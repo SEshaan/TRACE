@@ -3,17 +3,38 @@ from __future__ import annotations
 import json
 from typing import Any
 from handlers.actions import (
+    AbortQueryAction,
     FilterAction,
     FinishAction,
     GroupByAction,
+    InsufficientInfoAction,
     JoinAction,
     LimitAction,
     OrderByAction,
+    SchemaMissingAction,
     SelectColumnAction,
     SelectTableAction,
 )
 from handlers.query_handler import DecisionModel, QueryAction, QueryState
 from ml_adapters.ornith_adapter import OrnithDecisionAgent
+
+
+def _summarize_schema(schema: Any) -> str:
+    """
+    Compact text summary of the available schema, used to help the model
+    identify which table/column/relationship a request cannot satisfy.
+    """
+
+    if not schema or not getattr(schema, "tables", None):
+        return "No database schema is available."
+
+    lines = []
+    for t in schema.tables:
+        cols = ", ".join(c.name for c in t.columns)
+        rels = ", ".join(f"{fk.referenced_table}.{fk.referenced_column}" for fk in getattr(t, "foreign_keys", []) or [])
+        suffix = f" (FK -> {rels})" if rels else ""
+        lines.append(f"- {t.name}({cols}){suffix}")
+    return "\n".join(lines)
 
 
 class OrnithDecisionModel(DecisionModel):
@@ -49,6 +70,7 @@ class OrnithDecisionModel(DecisionModel):
         request: str,
         state: QueryState,
         environment: Any,
+        graph_context: dict | None = None,
     ) -> QueryAction:
         schema = environment
         actions = state.actions
@@ -68,13 +90,22 @@ class OrnithDecisionModel(DecisionModel):
                 t: f"Query data from table '{t}'"
                 for t in table_options
             }
+            # Terminal fail is offered at the root state so a fundamentally
+            # impossible request can be declined rather than guessed.
+            criteria["abort_query"] = (
+                "LAST RESORT: cannot satisfy this request with any available table "
+                "(only use when truly impossible)"
+            )
 
             resp = self.agent.predict(
                 state=f"User Goal: {request}\nCurrent Stage: No table selected yet.",
                 questions={
                     "table": {
                         "type": "choice",
-                        "instructions": "Which base database table should be queried first?",
+                        "instructions": (
+                            "Which base database table should be queried first? "
+                            "Choose 'abort_query' ONLY if no available table can satisfy this request."
+                        ),
                         "criteria": criteria,
                     }
                 },
@@ -82,6 +113,18 @@ class OrnithDecisionModel(DecisionModel):
             ans = resp.get("answers", {}).get("table", {})
             choice = ans.get("choice") or table_options[0]
             conf = float(ans.get("answer_confidence", 1.0))
+
+            if choice == "abort_query":
+                prompt = (
+                    f"The user asked: '{request}'.\n"
+                    f"No available table can satisfy this request. Why is it impossible? "
+                    f"Return ONLY valid JSON: {{\\\"reason\\\": \\\"...\\\"}}"
+                )
+                raw = self.agent._complete(prompt)
+                parsed = self.agent._parse_json(raw)
+                reason = str(parsed.get("reason", "Request cannot be satisfied by any available table")).strip()
+                return AbortQueryAction(reason=reason, confidence=conf)
+
             return SelectTableAction(table=choice, confidence=conf)
 
         # ------------------------------------------------------------------
@@ -101,16 +144,60 @@ class OrnithDecisionModel(DecisionModel):
         if not has_limit:
             operation_criteria["limit"] = "Restrict the number of rows returned"
 
+        # ------------------------------------------------------------------
+        # Graceful failure options.
+        # Offer these when the request cannot be built with what we have.
+        # Soft fails (insufficient_info / schema_missing) are recoverable by
+        # branching from an earlier checkpoint; abort_query is a hard terminal
+        # fail reserved for genuine dead-ends at/near the root state.
+        # ------------------------------------------------------------------
+        operation_criteria["insufficient_info"] = (
+            "The prompt lacks a fact needed to build this query (ask for clarification), "
+        )
+        operation_criteria["schema_missing"] = (
+            "The database does not contain the table/column/relationship this request needs"
+        )
+        # Terminal fail: only use as a last resort when nothing left to try.
+        operation_criteria["abort_query"] = (
+            "LAST RESORT: you cannot satisfy this request at all and have "
+            "nothing left to try (only use when truly impossible)"
+        )
+
         existing_actions_summary = ", ".join(
             f"{a.action_type}({getattr(a, 'column', getattr(a, 'table', ''))})"
             for a in actions
         )
 
+        schema_summary = _summarize_schema(schema)
+
+        # Graph context: avoid repeating rejected work on sibling branches and
+        # after backtracking from a checkpoint.
+        graph_note = ""
+        if graph_context:
+            siblings = graph_context.get("sibling_actions") or {}
+            if siblings:
+                tried = ", ".join(
+                    f"depth {d}: {', '.join(types)}"
+                    for d, types in sorted(siblings.items())
+                )
+                graph_note += f"Already Tried (abandoned branches): {tried}\n"
+            if graph_context.get("is_recovered_branch"):
+                graph_note += "You are on a branch recovered from an earlier checkpoint.\n"
+            failures = graph_context.get("recent_failures") or []
+            if failures:
+                failed = ", ".join(
+                    f"{f['action_type']} ({f['code']})"
+                    for f in failures
+                )
+                graph_note += f"Recently Rejected: {failed}\n"
+
         state_summary = (
             f"User Goal: {request}\n"
             f"Active Tables: {', '.join(active_tables)}\n"
             f"Existing Actions: {existing_actions_summary}\n"
-            f"Current SQL: {state.sql or 'None'}"
+            f"Current SQL: {state.sql or 'None'}\n"
+            f"Available Schema:\n{schema_summary}"
+            + (f"\nGraph Context:\n{graph_note}" if graph_note else "")
         )
 
         resp = self.agent.predict(
@@ -258,6 +345,62 @@ class OrnithDecisionModel(DecisionModel):
 
         elif op_choice == "limit":
             return LimitAction(limit=10, confidence=op_conf)
+
+        # ------------------------------------------------------------------
+        # Graceful failure actions: extract a free-text reason.
+        # These are terminal/branch-stopping decisions, not SQL steps.
+        # ------------------------------------------------------------------
+        if op_choice == "insufficient_info":
+            prompt = (
+                f"The user asked: '{request}'.\n"
+                f"Current query state:\n{state_summary}\n\n"
+                f"Why can't this query be completed with the available information? "
+                f"What fact do we need from the user? "
+                f"Return ONLY valid JSON: {{\"reason\": \"...\", \"clarification\": \"...\"}}"
+            )
+            raw = self.agent._complete(prompt)
+            parsed = self.agent._parse_json(raw)
+            reason = str(parsed.get("reason", "Insufficient information to complete the query")).strip()
+            clarification = parsed.get("clarification")
+            return InsufficientInfoAction(
+                reason=reason,
+                clarification=str(clarification) if clarification else None,
+                confidence=op_conf,
+            )
+
+        elif op_choice == "schema_missing":
+            prompt = (
+                f"The user asked: '{request}'.\n"
+                f"Available database schema:\n{schema_summary}\n\n"
+                f"Why can't this query be completed? Which table/column/relationship is missing? "
+                f"Return ONLY valid JSON: {{\"reason\": \"...\", \"table\": \"...\", \"column\": \"...\", \"expected_relationship\": \"...\"}}"
+            )
+            raw = self.agent._complete(prompt)
+            parsed = self.agent._parse_json(raw)
+            reason = str(parsed.get("reason", "Required schema object is missing in the database")).strip()
+
+            def _opt(v: Any) -> str | None:
+                return str(v).strip() if v else None
+
+            return SchemaMissingAction(
+                reason=reason,
+                table=_opt(parsed.get("table")),
+                column=_opt(parsed.get("column")),
+                expected_relationship=_opt(parsed.get("expected_relationship")),
+                confidence=op_conf,
+            )
+
+        elif op_choice == "abort_query":
+            prompt = (
+                f"The user asked: '{request}'.\n"
+                f"Current query state:\n{state_summary}\n\n"
+                f"Why can't this request be satisfied at all? "
+                f"Return ONLY valid JSON: {{\"reason\": \"...\"}}"
+            )
+            raw = self.agent._complete(prompt)
+            parsed = self.agent._parse_json(raw)
+            reason = str(parsed.get("reason", "Unable to satisfy the request")).strip()
+            return AbortQueryAction(reason=reason, confidence=op_conf)
 
         # Default fallback is finish
         return FinishAction(confidence=op_conf)
