@@ -31,7 +31,7 @@ export function toFlowNodes(nodes, { selectedId = null, edges = [] } = {}) {
     type: 'queryAction',
     position: node.position ?? { x: 0, y: 0 },
     selected: node.id === selectedId,
-    draggable: true,
+    draggable: false,
     data: {
       id: node.id,
       action: node.actionType,
