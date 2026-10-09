@@ -46,13 +46,7 @@ from openai import OpenAI
 
 
 class OrnithDecisionAgent:
-    """
-    Laya-like adapter around an OpenAI-compatible LM Studio endpoint.
-
-    Important:
-        This is an autoregressive model producing structured decisions.
-        It is API-compatible in spirit with Laya, not architecturally equivalent.
-    """
+    """Autoregressive decision adapter over an OpenAI-compatible LM Studio endpoint."""
 
     def __init__(
         self,
@@ -464,42 +458,3 @@ The score must be between 0 and 2.
         return options[0]
 
 
-# ----------------------------------------------------------------------
-# EXAMPLE
-# ----------------------------------------------------------------------
-
-if __name__ == "__main__":
-
-    agent = OrnithDecisionAgent(
-        model="ornith-1.5",
-        base_url="http://localhost:1234/v1",
-        temperature=0.0,
-    )
-
-    state = (
-        "Find students from the CSE department "
-        "who scored more than 85 in DBMS."
-    )
-
-    questions = {
-        "action": {
-            "type": "choice",
-            "instructions": "What is the primary query operation?",
-            "criteria": {
-                "filter": "Restrict rows using conditions",
-                "join": "Combine multiple tables",
-                "aggregate": "Calculate a summary",
-                "order": "Sort the results",
-            },
-        }
-    }
-
-    result = agent.predict(
-        state,
-        questions,
-    )
-
-    print(json.dumps(
-        result,
-        indent=2,
-    ))
