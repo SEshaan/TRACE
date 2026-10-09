@@ -12,6 +12,7 @@ import json
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 from unittest.mock import patch
 
 _TEST_DIR = Path(__file__).resolve().parent

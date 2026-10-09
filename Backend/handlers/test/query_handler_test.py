@@ -20,7 +20,6 @@ from Backend.handlers import (
     DeterministicValidator,
     DefaultQueryStateEngine,
     FilterAction,
-    FinishAction,
     GroupByAction,
     InsufficientInfoAction,
     InMemoryTraceStore,

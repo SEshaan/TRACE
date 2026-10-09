@@ -4,7 +4,7 @@ import json
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from handlers.actions import (
     AbortQueryAction,
@@ -68,14 +68,6 @@ class SQLiteTraceStore(TraceStore):
         model_version: str | None = None,
     ) -> QuerySession:
         session_id = str(uuid.uuid4())
-        session = QuerySession(
-            id=session_id,
-            request=request,
-            root_state_id=root_state.id,
-            current_state_id=root_state.id,
-            status=QueryStatus.NEW,
-            model_version=model_version,
-        )
 
         with self._get_connection() as conn:
             # Register model version if provided

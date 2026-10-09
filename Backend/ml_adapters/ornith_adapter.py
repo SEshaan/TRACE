@@ -43,7 +43,6 @@ import re
 from typing import Any
 
 from openai import OpenAI
-from openai.types.shared.reasoning_effort import ReasoningEffort
 
 
 class OrnithDecisionAgent:

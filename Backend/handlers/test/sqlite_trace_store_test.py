@@ -19,8 +19,6 @@ from Backend.handlers import (
     Checkpoint,
     FilterAction,
     PreviewResult,
-    QueryAction,
-    QuerySession,
     QueryState,
     QueryStatus,
     SelectTableAction,

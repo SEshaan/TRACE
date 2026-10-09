@@ -17,10 +17,8 @@ if str(_TEST_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_TEST_DIR.parent))
 
 from Backend.db_adapters.schema import (
-    ColumnSchema,
     DatabaseSchema,
     ForeignKeySchema,
-    IndexSchema,
     TableSchema,
 )
 from Backend.db_adapters.sqlite_adapter import (
