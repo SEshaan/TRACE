@@ -18,6 +18,15 @@ from handlers.compiler import SQLiteCompiler
 from handlers.sql_display import format_sql_for_display
 from pydantic import BaseModel, Field
 
+import os
+
+from db_adapters.sqlite_adapter import SQLiteAdapter
+from handlers.db_adapter import SQLiteDatabaseAdapter
+from handlers.schema_provider import SQLiteSchemaProvider
+from handlers.sqlite_trace_store import SQLiteTraceStore
+from handlers.state_engine import DefaultQueryStateEngine
+from handlers.validator import DeterministicValidator
+
 router = APIRouter(
     prefix="/queries",
     tags=["queries"],
@@ -38,10 +47,12 @@ def set_query_handler(handler: QueryHandler) -> None:
     _global_handler = handler
 
 
+from handlers.agent_controller import create_agent_controller
+
+
 def get_agent_controller():
     global _global_agent_controller
     if _global_agent_controller is None:
-        from handlers.agent_controller import create_agent_controller
         _global_agent_controller = create_agent_controller()
     return _global_agent_controller
 
@@ -53,16 +64,6 @@ def get_query_handler() -> QueryHandler:
     global _global_handler
     if _global_handler is not None:
         return _global_handler
-
-    import os
-
-    from db_adapters.sqlite_adapter import SQLiteAdapter
-    from handlers.compiler import SQLiteCompiler
-    from handlers.db_adapter import SQLiteDatabaseAdapter
-    from handlers.schema_provider import SQLiteSchemaProvider
-    from handlers.sqlite_trace_store import SQLiteTraceStore
-    from handlers.state_engine import DefaultQueryStateEngine
-    from handlers.validator import DeterministicValidator
 
     db_path = os.environ.get(
         "DATABASE_PATH",
