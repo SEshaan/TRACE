@@ -29,9 +29,8 @@ from Backend.api.queries import set_query_handler
 
 
 @pytest.fixture(autouse=True)
-def setup_api_handler():
-    db_path = _WORKSPACE_ROOT / "Backend" / "db_adapters" / "test" / "test.sqlite"
-    sqlite_adapter = SQLiteAdapter(str(db_path))
+def setup_api_handler(test_db_path):
+    sqlite_adapter = SQLiteAdapter(str(test_db_path))
     handler = QueryHandler(
         decision_model=RuleBasedDecisionModel(),
         state_engine=DefaultQueryStateEngine(),
@@ -42,6 +41,12 @@ def setup_api_handler():
         schema_provider=SQLiteSchemaProvider(sqlite_adapter),
         preview_limit=10,
     )
+    # The app loads queries as the top-level ``api.queries`` module (via
+    # Backend/main.py's ``from api.queries import router``), which is a *separate*
+    # module object from this test's ``Backend.api.queries``. Register on both so
+    # get_query_handler() returns our deterministic handler regardless of copy.
+    import api.queries as app_queries
+    app_queries.set_query_handler(handler)
     set_query_handler(handler)
 
 
@@ -71,7 +76,9 @@ def test_api_full_query_workflow(client: TestClient):
     assert action_table_resp.status_code == 200
     table_data = action_table_resp.json()
     assert table_data["success"] is True
-    assert table_data["state"]["preview"]["row_count"] == 8
+    # Bare SELECT_TABLE preview is capped at preview_limit (10); seed.sql has
+    # 12 students, so the preview shows 10 rows.
+    assert table_data["state"]["preview"]["row_count"] == 10
 
     # 3. Create checkpoint
     cp_resp = client.post(
@@ -92,7 +99,8 @@ def test_api_full_query_workflow(client: TestClient):
     assert filter_resp.status_code == 200
     filter_data = filter_resp.json()
     assert filter_data["success"] is True
-    assert filter_data["state"]["preview"]["row_count"] == 2
+    # seed.sql has exactly 3 students with gpa > 9.0 (Irene, Diana, Alice).
+    assert filter_data["state"]["preview"]["row_count"] == 3
 
     # 5. Recover from checkpoint with different filter
     recover_resp = client.post(
@@ -162,7 +170,8 @@ def test_api_aggregate_action(client: TestClient):
 
     finish_resp = client.post(f"/queries/{session_id}/finish")
     assert finish_resp.status_code == 200
-    assert finish_resp.json()["rows"][0]["total_gpa"] == pytest.approx(68.1)
+    # SUM(gpa) over seed.sql's 12 students is 102.7.
+    assert finish_resp.json()["rows"][0]["total_gpa"] == pytest.approx(102.7)
 
 
 def test_api_accepts_order_by_aggregate_action(client: TestClient):

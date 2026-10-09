@@ -13,7 +13,6 @@ if str(_WORKSPACE_ROOT) not in sys.path:
 if str(_TEST_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_TEST_DIR.parent))
 
-from Backend.db_adapters.sqlite_adapter import SQLiteAdapter
 from Backend.handlers.sqlite_trace_store import SQLiteTraceStore
 from Backend.handlers import (
     AbortQueryAction,
@@ -40,12 +39,7 @@ from Backend.handlers import (
     SQLiteSchemaProvider,
 )
 
-
-@pytest.fixture
-def test_db_path() -> Path:
-    db_path = _WORKSPACE_ROOT / "Backend" / "db_adapters" / "test" / "test.sqlite"
-    assert db_path.exists(), f"Test database not found at {db_path}"
-    return db_path.resolve()
+from Backend.db_adapters.sqlite_adapter import SQLiteAdapter
 
 
 @pytest.fixture
@@ -82,7 +76,8 @@ def test_apply_valid_actions_sequence(handler: QueryHandler):
     res1 = handler.apply_action(session.id, SelectTableAction(table="students"))
     assert res1.success is True
     assert res1.preview is not None
-    assert res1.preview.row_count == 8
+    # Preview is capped by preview_limit (10), so a bare table select shows 10 rows.
+    assert res1.preview.row_count == 10
     assert "students" in res1.state.sql
 
     # 2. SELECT_COLUMN
@@ -96,7 +91,7 @@ def test_apply_valid_actions_sequence(handler: QueryHandler):
         FilterAction(column="gpa", operator=">", value=9.0),
     )
     assert res3.success is True
-    assert res3.preview.row_count == 2  # Diana (9.5), Alice (9.2)
+    assert res3.preview.row_count == 3  # Irene (9.7), Diana (9.5), Alice (9.2)
 
     # 4. ORDER_BY
     res4 = handler.apply_action(
@@ -104,19 +99,19 @@ def test_apply_valid_actions_sequence(handler: QueryHandler):
         OrderByAction(column="gpa", direction="DESC"),
     )
     assert res4.success is True
-    assert res4.preview.rows[0]["name"] == "Diana"
+    assert res4.preview.rows[0]["name"] == "Irene"
 
     # 5. LIMIT
     res5 = handler.apply_action(session.id, LimitAction(limit=1))
     assert res5.success is True
     assert res5.preview.row_count == 1
-    assert res5.preview.rows[0]["name"] == "Diana"
+    assert res5.preview.rows[0]["name"] == "Irene"
 
     # Finish
     finish_res = handler.finish(session.id)
     assert isinstance(finish_res, QueryResult)
     assert finish_res.row_count == 1
-    assert finish_res.rows[0]["name"] == "Diana"
+    assert finish_res.rows[0]["name"] == "Irene"
 
 
 def test_compiler_orders_by_aggregate_expression():
@@ -400,11 +395,11 @@ def test_aggregate_action_compiles_and_executes(handler: QueryHandler):
         'SELECT SUM("gpa") AS "total_gpa" FROM "students"'
     )
     assert aggregate_result.preview is not None
-    assert aggregate_result.preview.rows[0]["total_gpa"] == pytest.approx(68.1)
+    assert aggregate_result.preview.rows[0]["total_gpa"] == pytest.approx(102.7)
 
     result = handler.finish(session.id)
     assert result.sql == aggregate_result.state.sql
-    assert result.rows[0]["total_gpa"] == pytest.approx(68.1)
+    assert result.rows[0]["total_gpa"] == pytest.approx(102.7)
 
 
 def test_count_all_with_group_by(handler: QueryHandler):
@@ -427,7 +422,7 @@ def test_count_all_with_group_by(handler: QueryHandler):
         'SELECT COUNT(*) AS "student_count" FROM "students"\n'
         'GROUP BY "department_id"'
     )
-    assert sum(row["student_count"] for row in result.preview.rows) == 8
+    assert sum(row["student_count"] for row in result.preview.rows) == 12
 
 
 @pytest.mark.parametrize(
@@ -479,7 +474,7 @@ def test_checkpoint_and_recovery(handler: QueryHandler):
         correction=FilterAction(column="gpa", operator=">", value=9.0),
     )
     assert recovery_res.success is True
-    assert recovery_res.preview.row_count == 2
+    assert recovery_res.preview.row_count == 3
 
     # Check trace includes branching states
     trace = handler.get_trace(session.id)

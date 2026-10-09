@@ -184,14 +184,14 @@ def test_sqlite_trace_store_round_trips_aggregate_action(temp_trace_db: SQLiteTr
     assert aggregate.alias == "student_count"
 
 
-def test_sqlite_trace_store_schema_metadata_sync(temp_trace_db: SQLiteTraceStore):
+def test_sqlite_trace_store_schema_metadata_sync(temp_trace_db: SQLiteTraceStore, test_db_path: Path):
     store = temp_trace_db
-    test_db = _WORKSPACE_ROOT / "Backend" / "db_adapters" / "test" / "test.sqlite"
-    adapter = SQLiteAdapter(str(test_db))
+    # Build the adapter/provider from conftest's shared seed.sql-backed DB.
+    adapter = SQLiteAdapter(str(test_db_path))
     provider = SQLiteSchemaProvider(adapter)
     schema = provider.get_schema()
 
-    db_id = store.sync_database_metadata("test_db", schema, str(test_db))
+    db_id = store.sync_database_metadata("test_db", schema, str(test_db_path))
     assert db_id is not None
 
     with store._get_connection() as conn:

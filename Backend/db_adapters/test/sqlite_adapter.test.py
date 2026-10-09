@@ -31,18 +31,6 @@ from Backend.db_adapters.sqlite_adapter import (
 
 
 @pytest.fixture
-def test_db_path() -> Path:
-    db_path = _TEST_DIR / "test.sqlite"
-    assert db_path.exists(), f"Test database not found at {db_path}"
-    return db_path
-
-
-@pytest.fixture
-def database(test_db_path: Path) -> SQLiteAdapter:
-    return SQLiteAdapter(str(test_db_path))
-
-
-@pytest.fixture
 def memory_database() -> SQLiteAdapter:
     return SQLiteAdapter(":memory:")
 
@@ -186,22 +174,36 @@ def test_connect_nonexistent_database_fails(tmp_path: Path) -> None:
 def test_query_select_all(database: SQLiteAdapter) -> None:
     result = database.query("SELECT * FROM students ORDER BY id")
     assert isinstance(result, QueryResult)
-    assert result.row_count == 8
-    assert result.columns == ["id", "name", "gpa", "department_id"]
-    assert len(result.rows) == 8
+    assert result.row_count == 12
+    assert result.columns == [
+        "id",
+        "name",
+        "email",
+        "gpa",
+        "year",
+        "department_id",
+        "admission_year",
+    ]
+    assert len(result.rows) == 12
 
     # Verify dictionary mappings
     assert result.rows[0] == {
         "id": 1,
         "name": "Alice",
+        "email": "alice@university.edu",
         "gpa": 9.2,
+        "year": 4,
         "department_id": 1,
+        "admission_year": 2023,
     }
     assert result.rows[-1] == {
-        "id": 8,
-        "name": "Hannah",
-        "gpa": 8.1,
-        "department_id": 3,
+        "id": 12,
+        "name": "Leo",
+        "email": "leo@university.edu",
+        "gpa": 8.3,
+        "year": 4,
+        "department_id": 5,
+        "admission_year": 2023,
     }
 
 
@@ -225,7 +227,15 @@ def test_query_empty_result(database: SQLiteAdapter) -> None:
     )
     assert result.row_count == 0
     assert result.rows == []
-    assert result.columns == ["id", "name", "gpa", "department_id"]
+    assert result.columns == [
+        "id",
+        "name",
+        "email",
+        "gpa",
+        "year",
+        "department_id",
+        "admission_year",
+    ]
 
 
 def test_query_with_join(database: SQLiteAdapter) -> None:
@@ -274,7 +284,7 @@ def test_query_with_explain(database: SQLiteAdapter) -> None:
 def test_query_whitespace_and_newlines(database: SQLiteAdapter) -> None:
     result = database.query("  \n\t  SELECT COUNT(*) AS total FROM students")
     assert result.row_count == 1
-    assert result.rows[0]["total"] == 8
+    assert result.rows[0]["total"] == 12
 
 
 def test_query_syntax_error_raises(database: SQLiteAdapter) -> None:
@@ -291,7 +301,7 @@ def test_preview_default_limit(database: SQLiteAdapter) -> None:
     preview = database.preview("SELECT * FROM students")
     assert isinstance(preview, SqlPreview)
     assert preview.parameters == ()
-    assert preview.result.row_count == 8
+    assert preview.result.row_count == 12
     assert "LIMIT 50" in preview.sql
 
 
@@ -333,8 +343,8 @@ def test_preview_with_cte(database: SQLiteAdapter) -> None:
     """
     preview = database.preview(sql, limit=2)
     assert preview.result.row_count == 2
-    assert preview.result.rows[0]["name"] == "Diana"
-    assert preview.result.rows[1]["name"] == "Alice"
+    assert preview.result.rows[0]["name"] == "Irene"
+    assert preview.result.rows[1]["name"] == "Diana"
 
 
 @pytest.mark.parametrize("invalid_limit", [0, -1, -50])
@@ -368,7 +378,18 @@ def test_with_limit_empty_sql_raises(empty_sql: str) -> None:
 
 def test_table_names(database: SQLiteAdapter) -> None:
     names = database.table_names()
-    assert names == ["courses", "departments", "students"]
+    assert names == [
+        "club_memberships",
+        "clubs",
+        "course_offerings",
+        "courses",
+        "departments",
+        "enrollments",
+        "professors",
+        "scholarships",
+        "student_projects",
+        "students",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -377,7 +398,7 @@ def test_table_names(database: SQLiteAdapter) -> None:
         ("students", True),
         ("departments", True),
         ("courses", True),
-        ("professors", False),
+        ("professors", True),
         ("nonexistent", False),
     ],
 )
@@ -395,7 +416,15 @@ def test_schema_table_students(database: SQLiteAdapter) -> None:
     assert table.name == "students"
 
     column_names = [col.name for col in table.columns]
-    assert column_names == ["id", "name", "gpa", "department_id"]
+    assert column_names == [
+        "id",
+        "name",
+        "email",
+        "gpa",
+        "year",
+        "department_id",
+        "admission_year",
+    ]
 
     id_col = table.column("id")
     assert id_col is not None
@@ -435,10 +464,13 @@ def test_schema_table_nonexistent_raises(database: SQLiteAdapter) -> None:
         database.schema_table("unknown_table")
 
 
-def test_schema_full_database(database: SQLiteAdapter) -> None:
+def test_schema_full_database(
+    database: SQLiteAdapter,
+    test_db_path: Path,
+) -> None:
     schema = database.schema()
     assert isinstance(schema, DatabaseSchema)
-    assert len(schema.tables) == 3
+    assert len(schema.tables) == 10
 
     assert schema.has_table("students") is True
     assert schema.has_table("departments") is True
@@ -455,16 +487,36 @@ def test_schema_full_database(database: SQLiteAdapter) -> None:
     # Tables with specific column
     dept_fk_tables = schema.tables_with_column("department_id")
     dept_fk_names = sorted([t.name for t in dept_fk_tables])
-    assert dept_fk_names == ["courses", "students"]
+    assert dept_fk_names == ["courses", "professors", "students"]
 
-    # Relationships
+    # Relationships: one entry per foreign key across every table. Derive the
+    # ground truth from SQLite's authoritative FK catalog and confirm the
+    # adapter's introspection matches it exactly.
+    import sqlite3 as _sqlite3
+
+    with _sqlite3.connect(str(test_db_path)) as raw_conn:
+        expected_relationships = [
+            (
+                table_name,
+                ForeignKeySchema(
+                    column=row[3],
+                    referenced_table=row[2],
+                    referenced_column=row[4],
+                ),
+            )
+            for table_name in database.table_names()
+            for row in raw_conn.execute(f"PRAGMA foreign_key_list({table_name})")
+        ]
+
     relationships = schema.relationships()
-    assert len(relationships) == 2
-    rel_sources = {source for source, _ in relationships}
-    assert rel_sources == {"courses", "students"}
-    for _, fk in relationships:
-        assert fk.referenced_table == "departments"
-        assert fk.referenced_column == "id"
+    assert len(relationships) == len(expected_relationships)
+    assert sorted(
+        (source, fk.referenced_table, fk.referenced_column)
+        for source, fk in relationships
+    ) == sorted(
+        (source, fk.referenced_table, fk.referenced_column)
+        for source, fk in expected_relationships
+    )
 
 
 # -----------------------------------------------------------------------------
