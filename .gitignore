@@ -11,9 +11,16 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# TRACE runtime data
-Backend/trace_logs.sqlite
-Backend/trace_logs.sqlite.backup
+# SQLite databases (runtime + committed fixtures)
+*.sqlite
+*.sqlite.backup
+Backend/trace_logs.sqlite*
+Backend/db_adapters/test/test.sqlite
+
+# TRACE runtime data & scratch files
+archive/
+run_ornith_manual.py
+Backend/seed_demos.py
 
 # Frontend dependencies
 Frontend/node_modules/
