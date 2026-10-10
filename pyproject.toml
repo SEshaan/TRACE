@@ -1,0 +1,21 @@
+# Shared ruff configuration (lints Backend/ and Frontend/ Python together).
+#
+# Scope decision: this repo has NO root pyproject.toml before this file, and no
+# formatter/linter was previously configured. We enable only the rules the codebase
+# already satisfies plus genuine linting value — `F` (pyflakes): unused imports,
+# undefined names, etc. This matches the `pyflakes` already installed in Backend/.
+#
+# Why NOT E/I (formatting + import-order)? Those would flag ~150 existing files and
+# force a large reformat on first commit. They are intentionally left off; enable them
+# later with:  ruff check --select F,E4,E7,I --fix   then   ruff format
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["F"]
+
+# The one remaining `F` hit is a deliberate lazy import in conftest.py: the fixture
+# imports SQLiteAdapter locally to avoid a circular/session-scoped load, and only
+# references it inside a string annotation. Intentional — not a real undefined name.
+[tool.ruff.lint.per-file-ignores]
+"**/conftest.py" = ["F821"]

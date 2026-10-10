@@ -1,0 +1,11 @@
+# Backend dependencies (see .github/workflows/ci.yml for how they're installed)
+#
+# Runtime deps for `python main.py`:
+fastapi==0.142.2
+uvicorn==0.54.0
+pydantic==2.13.5
+# starlette + anyio are pulled in transitively by fastapi; do not pin separately.
+
+# Test runner + coverage plugin (installed alongside the above for CI):
+pytest==9.1.1
+pytest-cov==6.2.1

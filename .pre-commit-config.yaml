@@ -1,0 +1,19 @@
+# Shared pre-commit hooks (backend lint + frontend tests).
+# Install once with:  pre-commit install   (or:  pre-commit run --all-files)
+repos:
+  # Lint all Python in the repo (Backend/ + any Frontend/ .py) via ruff.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+
+  # Run the frontend test suite on every commit (not per-file, so it runs once).
+  - repo: local
+    hooks:
+      - id: frontend-tests
+        name: Frontend tests (vitest)
+        entry: npm test -- --run
+        language: system
+        pass_filenames: false
+        always_run: true
+        types: []

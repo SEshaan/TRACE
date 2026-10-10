@@ -39,28 +39,47 @@ def test_health_endpoint_returns_ok():
 
 def test_cors_headers_present_on_origin_request():
     client = TestClient(app)
+    # A whitelisted origin is echoed back with credentials enabled.
     response = client.get(
         "/health",
-        headers={"Origin": "http://example.com"},
+        headers={"Origin": "http://localhost:5173"},
     )
 
-    # Wildcard origin config echoes the request's origin.
-    assert response.headers["access-control-allow-origin"] == "http://example.com"
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_cors_rejects_disallowed_origin():
+    # The whole point of an explicit allowlist (vs. `allow_origins=["*"]`):
+    # a non-whitelisted origin must NOT be echoed back as allowed.
+    # NOTE: Starlette still emits `access-control-allow-credentials: true`
+    # globally when the feature is enabled, but with no matching allow-origin
+    # that header grants an attacker nothing (the browser treats the response
+    # as non-CORS). The security-critical assertion is therefore ACAO absence.
+    client = TestClient(app)
+    response = client.get(
+        "/health",
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_cors_preflight_allows_methods_and_headers():
     client = TestClient(app)
+    # Whitelisted origin: preflight echoes the specific origin and permits
+    # all methods/headers (credentials are on, so the origin is echoed verbatim).
     response = client.options(
         "/queries",
         headers={
-            "Origin": "http://example.com",
+            "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "content-type,authorization",
         },
     )
 
     assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert "POST" in response.headers["access-control-allow-methods"]
     assert "content-type" in response.headers["access-control-allow-headers"]
 

@@ -1,3 +1,6 @@
+import os
+from typing import List
+
 import uvicorn
 from api.queries import router as query_router
 from fastapi import FastAPI
@@ -14,9 +17,20 @@ def create_app() -> FastAPI:
         ),
     )
 
+    # CORS: Starlette rejects `allow_origins=["*"]` together with
+    # `allow_credentials=True` as an insecure config (any origin could read
+    # credentialed cross-origin data). Use an explicit allowlist instead.
+    # Override via the comma-separated `CORS_ORIGINS` env var in production;
+    # defaults to a permissive-but-explicit dev allowlist (Vite's default port).
+    def _cors_origins() -> List[str]:
+        raw = os.environ.get("CORS_ORIGINS")
+        if not raw:
+            return ["http://localhost:5173", "http://127.0.0.1:5173"]
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
