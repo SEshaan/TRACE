@@ -47,6 +47,11 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 
-# Planning / working docs (keep READMEs tracked)
+# Planning / working docs.
+#
+# Durable product specs are trackable; everything else is scratch that should not
+# ship in the built tree. See G5 in TaskList.md for the durable-vs-scratch split.
 *.md
 !**/README.md
+!**/FRONTEND_API_PLAN.md
+!**/FRONTEND_CLIENT_SPEC.md
