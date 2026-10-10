@@ -28,7 +28,7 @@ const FIT_VIEW_OPTIONS = {
  *
  * This component owns no data and has no mock fallback.
  */
-export default function FlowTest({
+export default function TraceTree({
   nodes = [],
   edges = [],
   onSelectNode,

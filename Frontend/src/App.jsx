@@ -4,7 +4,7 @@ import '../styled-system/styles.css'
 
 import { Button } from '@/components/ui'
 
-import FlowTest from './flowTest'
+import TraceTree from './TraceTree'
 
 import { useSession } from './hooks/useSession'
 import { useQueryRun } from './hooks/useQueryRun'
@@ -1399,7 +1399,7 @@ function App() {
             position: 'relative',
           })}
         >
-          <FlowTest
+          <TraceTree
             nodes={flowNodes}
             edges={flowEdges}
 
